@@ -14,7 +14,7 @@ Function Invoke-SelectUpdatesPlugin{
     $pluginComponent = "Decline-NotApprovedUpdatesOnUpstreamWSUS"
 
     $DeclinedUpdates = @{}
-    
+
     Add-TextToCMLog $LogFile "Checking if WSUS server $WSUSFQDN is using an upstream WSUS." $pluginComponent 1
     $WSUSConfig = $WSUSServer.GetConfiguration()
 
@@ -29,9 +29,9 @@ Function Invoke-SelectUpdatesPlugin{
             Set-Location $OriginalLocation
             Return
         }
-        
+
         Add-TextToCMLog $LogFile "Retrieving all approved updates on Upstream WSUS Server `"$($WSUSConfig.UpstreamWsusServerName)`"." $pluginComponent 1
-        $UpstreamApproved = $UpstreamWSUSServer.GetUpdates() | Where {$_.IsApproved}
+        $UpstreamApproved = $UpstreamWSUSServer.GetUpdates() | Where-Object {$_.IsApproved}
         Add-TextToCMLog $LogFile "Retrieved list of updates on Upstream WSUS Server." $pluginComponent 1
         $UpstreamApprovedIDs = $UpstreamApproved.Id.UpdateId.Guid
 
