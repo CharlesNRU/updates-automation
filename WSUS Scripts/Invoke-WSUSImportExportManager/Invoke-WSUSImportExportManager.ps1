@@ -1,37 +1,14 @@
 ﻿<#
 .SYNOPSIS
-The purpose of this script to handle the export/import process for WSUS without internet connectivity.
+The purpose of this script is to handle the export/import process for WSUS without internet connectivity.
 WSUS with Internet connectivity will use this script to perform an EXPORT to get: WSUS Content, WSUS Metadata, WSUS Configuration XML file
 WSUS without internet connectivity will use this script to perform an IMPORT and get same updates, WSUS Configuration and update approvals as the internet connected WSUS
+
 
 .DESCRIPTION
 The script can be used to export and import the configuration, metadata and content from a WSUS server.
 A simple metadata export does not include which updates were approved or not. By using this script, we can export this information too and "sync" which updates are approved to what computer groups in WSUS.
 If you want a change to persist on your disconnected WSUS instances, you will have to make the changes on the internet-connected WSUS server where we perform the export.
-
-.AUTHOR
-Charles Tousignant
-
-.VERSION
-0.8.1
-    Added a function to get all updates from the WSUS Server and retry if there is an error.
-    There is a built-in timeout in the GetUpdates() function that cannot be changed.
-0.8
-    Added option 'ShowLocallyPublishedUpdates' which makes locally published updates show up in WSUS during the import process
-    Added function "Set-EulaDownloaded" to forcefully tell the WSUS Database that EULAs are downloaded after metadata import
-        -This might be useful if WSUS thinks it's missing EULAs when doing a WSUS Import.
-    IIS functions missing on 2012 R2, adjusted code to use the IIS: drive instead for compatibility
-    Script will now exit with an exit code corresponding to a fail if it does not finish successfully.
-0.7
-    Using XML file for configuration instead of INI
-0.6
-    Checks and modify IIS settings according to best practices (if IIS pool is using default values)
-    Added option to Force Best practices for the IIS pool (disregard current values)
-    Added option to Drop SUSDB in case you don't want to do that during the metadata import
-0.5
-    Check if WSUS IIS Application pool is started after metadata import
-    Content download status messages at the end of the import
-    Rewriting of the WSUS Configuration saving part of the script, 1 save operation for all applicable changes.
 #>
 
 [CmdletBinding()]
@@ -50,7 +27,7 @@ Function Add-TextToCMLog {
 ##########################################################################################################
 <#
 .SYNOPSIS
-   Log to a file in a format that can be read by Trace32.exe / CMTrace.exe 
+   Log to a file in a format that can be read by Trace32.exe / CMTrace.exe
 
 .DESCRIPTION
    Write a line of data to a script log file in a format that can be parsed by Trace32.exe / CMTrace.exe
@@ -72,7 +49,7 @@ Function Add-TextToCMLog {
    Add-TextToCMLog c:\output\update.log "Application of MS15-031 failed" Apply_Patch 3
 
    This will write a line to the update.log file in c:\output stating that "Application of MS15-031 failed".
-   The source component will be Apply_Patch and the line will be highlighted in red as it is an error 
+   The source component will be Apply_Patch and the line will be highlighted in red as it is an error
    (severity - 3).
 
 #>
@@ -101,7 +78,7 @@ Param(
 
 
 #Obtain UTC offset
-$DateTime = New-Object -ComObject WbemScripting.SWbemDateTime 
+$DateTime = New-Object -ComObject WbemScripting.SWbemDateTime
 $DateTime.SetVarDate($(Get-Date))
 $UtcValue = $DateTime.Value
 $UtcOffset = $UtcValue.Substring(21, $UtcValue.Length - 21)
@@ -168,19 +145,19 @@ Function Invoke-WSUSSyncCheck {
 
     $WaitInterval = 0 #Used to skip the initial wait cycle if it isn't necessary.
     Do{
-    
+
         #Wait until the loop has iterated once.
         If ($WaitInterval -gt 0){
             Add-TextToCMLog $LogFile "Waiting $TimeToWait minutes for lead time to pass before executing." $component 1
-            Start-Sleep -Seconds ($WaitInterval)  
-        }    
+            Start-Sleep -Seconds ($WaitInterval)
+        }
 
-        #If the WSUS server is synchronizing then wait for it to finish.        
+        #If the WSUS server is synchronizing then wait for it to finish.
         Do {
             #If syncronizing then wait.
             If($Syncronizing){
-                Add-TextToCMLog $LogFile "Waiting for WSUS server to stop syncing." $component 1  
-                Start-Sleep -Seconds (300)  
+                Add-TextToCMLog $LogFile "Waiting for WSUS server to stop syncing." $component 1
+                Start-Sleep -Seconds (300)
             }
 
             #Get the synchronization status.
@@ -217,7 +194,7 @@ Function Invoke-WSUSSyncCheck {
             Add-TextToCMLog $LogFile "Synchronize successfully before running the script." $component 3
             Exit 1
         }
- 
+
         #Calculate the remaining time to wait for the lead time to expire.
         $TimeToWait = (($WSUSLastSyncInfo.EndTime).AddMinutes($SyncLeadTime) - ((Get-Date).ToUniversalTime())).Minutes
 
@@ -239,12 +216,12 @@ Function Test-RegistryValue {
         [Parameter(Position = 1, Mandatory = $true)]
         [String]$Value,
         [Switch]$PassThru
-    ) 
+    )
 
     Process {
         If (Test-Path $Path) {
             $Key = Get-Item -LiteralPath $Path
-            If ($Key.GetValue($Value, $null) -ne $null) {
+            If ($null -ne $Key.GetValue($Value, $null)) {
                 If ($PassThru) {
                     Get-ItemProperty $Path $Value
                 } Else {
@@ -299,7 +276,7 @@ Function Get-WSUSDB{
         Add-TextToCMLog $LogFile "Successfully tested the connection to the ($($WSUSServerDB.DatabaseName)) database on $($WSUSServerDB.ServerName)." $component 1
     }
     Catch{
-        Add-TextToCMLog $LogFile "Failed to connect to the ($($WSUSServerDB.DatabaseName)) database on $($WSUSServerDB.ServerName)." $component 3       
+        Add-TextToCMLog $LogFile "Failed to connect to the ($($WSUSServerDB.DatabaseName)) database on $($WSUSServerDB.ServerName)." $component 3
         Add-TextToCMLog $LogFile "Error ($($_.Exception.HResult)): $($_.Exception.Message)" $component 3
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
         Exit $($_.Exception.HResult)
@@ -406,10 +383,10 @@ Function Get-WSUSUpdates{
 ##########################################################################################################
 <#
 .SYNOPSIS
-   Get all the updates from the WSUS Server with retries in case of an error when getting updates.
+   Get all the updates from the WSUS Server and retries in case of an error when getting updates.
 
 .DESCRIPTION
-   Use the WSUS api to get all the updates.
+   Use the WSUS api to get all the updates and will retry according to $MaxRetries and wait $SecondsBetweenRetries.
 
 #>
 ##########################################################################################################
@@ -850,7 +827,7 @@ function Invoke-Sqlcmd2 {
                     Add-Type $cSharp -ErrorAction stop
                 }
 
-                
+
             }
             catch {
                 if (-not $_.ToString() -like "*The type name 'DBNullScrubber' already exists*") {
@@ -1112,122 +1089,114 @@ Function Invoke-WSUSDBReindex{
     Add-TextToCMLog $LogFile "Starting reindex of WSUS Database." $component 1
 
 	$SqlConnection = Connect-WSUSDB $WSUSServerDB
-    
+
     #T-SQL query used for reindexing
     $tSQL = @"
-SET NOCOUNT ON; 
- 
--- Rebuild or reorganize indexes based on their fragmentation levels 
-DECLARE @work_to_do TABLE ( 
-    objectid int 
-    , indexid int 
-    , pagedensity float 
-    , fragmentation float 
-    , numrows int 
-) 
- 
-DECLARE @objectid int; 
-DECLARE @indexid int; 
-DECLARE @schemaname nvarchar(130);  
-DECLARE @objectname nvarchar(130);  
-DECLARE @indexname nvarchar(130);  
-DECLARE @numrows int 
-DECLARE @density float; 
-DECLARE @fragmentation float; 
-DECLARE @command nvarchar(4000);  
-DECLARE @fillfactorset bit 
-DECLARE @numpages int 
- 
--- Select indexes that need to be defragmented based on the following 
--- * Page density is low 
--- * External fragmentation is high in relation to index size 
-INSERT @work_to_do 
-SELECT 
-    f.object_id 
-    , index_id 
-    , avg_page_space_used_in_percent 
-    , avg_fragmentation_in_percent 
-    , record_count 
-FROM  
-    sys.dm_db_index_physical_stats (DB_ID(), NULL, NULL , NULL, 'SAMPLED') AS f 
-WHERE 
-    (f.avg_page_space_used_in_percent < 85.0 and f.avg_page_space_used_in_percent/100.0 * page_count < page_count - 1) 
-    or (f.page_count > 50 and f.avg_fragmentation_in_percent > 15.0) 
-    or (f.page_count > 10 and f.avg_fragmentation_in_percent > 80.0) 
- 
- 
-SELECT @numpages = sum(ps.used_page_count) 
-FROM 
-    @work_to_do AS fi 
-    INNER JOIN sys.indexes AS i ON fi.objectid = i.object_id and fi.indexid = i.index_id 
-    INNER JOIN sys.dm_db_partition_stats AS ps on i.object_id = ps.object_id and i.index_id = ps.index_id 
- 
--- Declare the cursor for the list of indexes to be processed. 
-DECLARE curIndexes CURSOR FOR SELECT * FROM @work_to_do 
- 
--- Open the cursor. 
-OPEN curIndexes 
- 
--- Loop through the indexes 
-WHILE (1=1) 
-BEGIN 
-    FETCH NEXT FROM curIndexes 
-    INTO @objectid, @indexid, @density, @fragmentation, @numrows; 
-    IF @@FETCH_STATUS < 0 BREAK; 
- 
-    SELECT  
-        @objectname = QUOTENAME(o.name) 
-        , @schemaname = QUOTENAME(s.name) 
-    FROM  
-        sys.objects AS o 
-        INNER JOIN sys.schemas as s ON s.schema_id = o.schema_id 
-    WHERE  
-        o.object_id = @objectid; 
- 
-    SELECT  
-        @indexname = QUOTENAME(name) 
-        , @fillfactorset = CASE fill_factor WHEN 0 THEN 0 ELSE 1 END 
-    FROM  
-        sys.indexes 
-    WHERE 
-        object_id = @objectid AND index_id = @indexid; 
- 
-    IF ((@density BETWEEN 75.0 AND 85.0) AND @fillfactorset = 1) OR (@fragmentation < 30.0) 
-        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REORGANIZE'; 
-    ELSE IF @numrows >= 5000 AND @fillfactorset = 0 
-        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REBUILD WITH (FILLFACTOR = 90)'; 
-    ELSE 
-        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REBUILD'; 
-    EXEC (@command);  
-END 
- 
--- Close and deallocate the cursor. 
-CLOSE curIndexes; 
-DEALLOCATE curIndexes; 
- 
-IF EXISTS (SELECT * FROM @work_to_do) 
-BEGIN 
-    SELECT @numpages = @numpages - sum(ps.used_page_count) 
-    FROM 
-        @work_to_do AS fi 
-        INNER JOIN sys.indexes AS i ON fi.objectid = i.object_id and fi.indexid = i.index_id 
-        INNER JOIN sys.dm_db_partition_stats AS ps on i.object_id = ps.object_id and i.index_id = ps.index_id 
-END  
- 
---Update all statistics  
-EXEC sp_updatestats  
+SET NOCOUNT ON;
+
+-- Rebuild or reorganize indexes based on their fragmentation levels
+DECLARE @work_to_do TABLE (
+    objectid int
+    , indexid int
+    , pagedensity float
+    , fragmentation float
+    , numrows int
+)
+
+DECLARE @objectid int;
+DECLARE @indexid int;
+DECLARE @schemaname nvarchar(130);
+DECLARE @objectname nvarchar(130);
+DECLARE @indexname nvarchar(130);
+DECLARE @numrows int
+DECLARE @density float;
+DECLARE @fragmentation float;
+DECLARE @command nvarchar(4000);
+DECLARE @fillfactorset bit
+DECLARE @numpages int
+
+-- Select indexes that need to be defragmented based on the following
+-- * Page density is low
+-- * External fragmentation is high in relation to index size
+INSERT @work_to_do
+SELECT
+    f.object_id
+    , index_id
+    , avg_page_space_used_in_percent
+    , avg_fragmentation_in_percent
+    , record_count
+FROM
+    sys.dm_db_index_physical_stats (DB_ID(), NULL, NULL , NULL, 'SAMPLED') AS f
+WHERE
+    (f.avg_page_space_used_in_percent < 85.0 and f.avg_page_space_used_in_percent/100.0 * page_count < page_count - 1)
+    or (f.page_count > 50 and f.avg_fragmentation_in_percent > 15.0)
+    or (f.page_count > 10 and f.avg_fragmentation_in_percent > 80.0)
+
+
+SELECT @numpages = sum(ps.used_page_count)
+FROM
+    @work_to_do AS fi
+    INNER JOIN sys.indexes AS i ON fi.objectid = i.object_id and fi.indexid = i.index_id
+    INNER JOIN sys.dm_db_partition_stats AS ps on i.object_id = ps.object_id and i.index_id = ps.index_id
+
+-- Declare the cursor for the list of indexes to be processed.
+DECLARE curIndexes CURSOR FOR SELECT * FROM @work_to_do
+
+-- Open the cursor.
+OPEN curIndexes
+
+-- Loop through the indexes
+WHILE (1=1)
+BEGIN
+    FETCH NEXT FROM curIndexes
+    INTO @objectid, @indexid, @density, @fragmentation, @numrows;
+    IF @@FETCH_STATUS < 0 BREAK;
+
+    SELECT
+        @objectname = QUOTENAME(o.name)
+        , @schemaname = QUOTENAME(s.name)
+    FROM
+        sys.objects AS o
+        INNER JOIN sys.schemas as s ON s.schema_id = o.schema_id
+    WHERE
+        o.object_id = @objectid;
+
+    SELECT
+        @indexname = QUOTENAME(name)
+        , @fillfactorset = CASE fill_factor WHEN 0 THEN 0 ELSE 1 END
+    FROM
+        sys.indexes
+    WHERE
+        object_id = @objectid AND index_id = @indexid;
+
+    IF ((@density BETWEEN 75.0 AND 85.0) AND @fillfactorset = 1) OR (@fragmentation < 30.0)
+        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REORGANIZE';
+    ELSE IF @numrows >= 5000 AND @fillfactorset = 0
+        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REBUILD WITH (FILLFACTOR = 90)';
+    ELSE
+        SET @command = N'ALTER INDEX ' + @indexname + N' ON ' + @schemaname + N'.' + @objectname + N' REBUILD';
+    EXEC (@command);
+END
+
+-- Close and deallocate the cursor.
+CLOSE curIndexes;
+DEALLOCATE curIndexes;
+
+IF EXISTS (SELECT * FROM @work_to_do)
+BEGIN
+    SELECT @numpages = @numpages - sum(ps.used_page_count)
+    FROM
+        @work_to_do AS fi
+        INNER JOIN sys.indexes AS i ON fi.objectid = i.object_id and fi.indexid = i.index_id
+        INNER JOIN sys.dm_db_partition_stats AS ps on i.object_id = ps.object_id and i.index_id = ps.index_id
+END
+
+--Update all statistics
+EXEC sp_updatestats
 "@
 
     Try{
-        <#
-        Note:This will print SQL messages in the log file in case reindexing stops working for some reason.
-        Invoke-Sqlcmd2 -SQLConnection $SqlConnection -Database $($WSUSServerdb.DatabaseName) -Query $($tSQL) -MessagesToOutput -ErrorAction Stop | ForEach-Object{
-            Add-TextToCMLog $LogFile "SQL OUTPUT: $($_)" $component 1
-        }
-        #>
-
         Invoke-Sqlcmd2 -SQLConnection $SqlConnection -Database $($WSUSServerdb.DatabaseName) -Query $($tSQL) -ErrorAction Stop
-
     }Catch{
         Add-TextToCMLog $LogFile "Failed to reindex WSUS Database." $component 3
         Add-TextToCMLog $LogFile "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
@@ -1293,7 +1262,7 @@ Function Add-ChildComputerGroupToParentXML{
     $currentGroupElement.InnerText = $($currentGroupName)
 
     $childGroups = $ComputerTargetGroup.GetChildTargetGroups()
-    if($childGroups -ne $Null){#Current group has childs, recurse
+    if($null -ne $childGroups){#Current group has childs, recurse
         foreach($childGroup in $childGroups){
             Add-ChildComputerGroupToParentXML $MainXMLDocument $currentGroupElement $childGroup
         }
@@ -1326,7 +1295,7 @@ Function Export-WSUSConfigurationToXML{
         [Parameter(Mandatory=$false)]
         [bool] $WSUSConfigOnly=$false
     )
-    
+
     Add-TextToCMLog $LogFile "Saving WSUS configuration." $component 1
     $WSUSConfig = $WSUSServer.GetConfiguration()
 
@@ -1349,7 +1318,7 @@ Function Export-WSUSConfigurationToXML{
     [void]$WSUSXMLGeneralConfig.AppendChild($WSUSXMLUpdateFiles)
 
     #Add-TextToCMLog $LogFile "Saving WSUS `"Update files and languages`" options." $component 1
-    
+
     $expressUpdates = $WSUSXMLConfig.CreateElement("DownloadExpressPackages")
     $expressUpdates.InnerText = $WSUSConfig.DownloadExpressPackages
     [void]$WSUSXMLUpdateFiles.AppendChild($expressUpdates)
@@ -1373,18 +1342,18 @@ Function Export-WSUSConfigurationToXML{
         Add-TextToCMLog $LogFile "Saving computer groups." $component 1
         $WSUSXMLComputerGroups = $WSUSXMLConfig.CreateElement("ComputerGroups")
         [void]$WSUSXMLConfigRoot.AppendChild($WSUSXMLComputerGroups)
-    
-        
-        $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where {$_.name -eq "All Computers"}
+
+
+        $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.name -eq "All Computers"}
         $allComputersGroupElement = $WSUSXMLConfig.CreateElement("ComputerGroup")
         $allComputersGroupElement.InnerText = $($allComputersGroup.Name)
 
-    
+
         $childGroups = $allComputersGroup.GetChildTargetGroups()
         foreach($childgroup in $childGroups){
             Add-ChildComputerGroupToParentXML -MainXMLDocument $WSUSXMLConfig -ParentXMLElement $allComputersGroupElement -ComputerTargetGroup $childgroup
         }
-    
+
         [void]$WSUSXMLComputerGroups.AppendChild($allComputersGroupElement)
 
         if($IncludeApprovals){
@@ -1392,10 +1361,10 @@ Function Export-WSUSConfigurationToXML{
             $WSUSXMLApprovedUpdates = $WSUSXMLConfig.CreateElement("ApprovedUpdates")
             [void]$WSUSXMLConfigRoot.AppendChild($WSUSXMLApprovedUpdates)
 
-            
-            #$WSUSServer.GetUpdates() | Where {$_.IsApproved -eq $true} | ForEach-Object{
-            Get-WSUSUpdates -WSUSServer $WSUSServer | Where {$_.IsApproved -eq $true} | ForEach-Object{
-    
+
+            #$WSUSServer.GetUpdates() | Where-Object {$_.IsApproved -eq $true} | ForEach-Object{
+            Get-WSUSUpdates -WSUSServer $WSUSServer | Where-Object {$_.IsApproved -eq $true} | ForEach-Object{
+
                 $updateElement = $WSUSXMLConfig.CreateElement("Update")
                 $updateElement.SetAttribute("ID",$_.id.UpdateID.Guid)
 
@@ -1411,7 +1380,7 @@ Function Export-WSUSConfigurationToXML{
             }
         }
     }
-    
+
 
     Add-TextToCMLog $LogFile "Saving information to XML file." $component 1
     Try{
@@ -1425,7 +1394,7 @@ Function Export-WSUSConfigurationToXML{
 }
 ##########################################################################################################
 
-Function Create-ComputerGroupFromXML{
+Function New-ComputerGroupFromXML{
 ##########################################################################################################
 <#
 .SYNOPSIS
@@ -1464,7 +1433,7 @@ Function Create-ComputerGroupFromXML{
                 $newGroup = $WSUSServer.CreateComputerTargetGroup($groupName, $ParentComputerGroup)
             }else{
                 Add-TextToCMLog $LogFile  "Group `"$($groupName)`" under parent group `"$($ParentComputerGroup.Name)`" already exists, skipping." $component 1
-                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupName}
+                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupName}
             }
         }else{#Group with same computer name already exists
             [bool]$NeedsToBeDeleted = $false
@@ -1477,7 +1446,7 @@ Function Create-ComputerGroupFromXML{
             if($NeedsToBeDeleted){
                 Add-TextToCMLog $LogFile  "Computer group named `"$($groupName)`" already exists, but not under group `"$($ParentComputerGroup.Name)`", deleting group." $component 1
                 Try{
-                    ($WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupName}).Delete()
+                    ($WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupName}).Delete()
                 }Catch{
                     Add-TextToCMLog $LogFile  "Failed to delete computer target group." $component 3
                     Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
@@ -1488,15 +1457,15 @@ Function Create-ComputerGroupFromXML{
                 $newGroup = $WSUSServer.CreateComputerTargetGroup($groupName, $ParentComputerGroup)
             }else{
                 Add-TextToCMLog $LogFile  "Group `"$($groupName)`" under parent group `"$($ParentComputerGroup.Name)`" already exists, skipping." $component 1
-                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupName}
+                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupName}
             }
 
         #Recurse for any child computer groups
         $NewComputerGroupElement.ComputerGroup | ForEach-Object{
             if($_ -is [String]){
-                Create-ComputerGroupFromXML -ParentComputerGroup $newGroup -NewComputerGroupName $_
+                New-ComputerGroupFromXML -ParentComputerGroup $newGroup -NewComputerGroupName $_
             }elseif($_ -is [System.Xml.XmlElement]){
-                Create-ComputerGroupFromXML -ParentComputerGroup $newGroup -NewComputerGroupElement $_
+                New-ComputerGroupFromXML -ParentComputerGroup $newGroup -NewComputerGroupElement $_
             }
         }
 
@@ -1516,7 +1485,7 @@ Function Create-ComputerGroupFromXML{
             if($NeedsToBeDeleted){
                 Add-TextToCMLog $LogFile  "Computer group named `"$($groupName)`" already exists, but not under group `"$($ParentComputerGroup.Name)`", deleting group." $component 1
                 Try{
-                    ($WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupName}).Delete()
+                    ($WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupName}).Delete()
                 }Catch{
                     Add-TextToCMLog $LogFile  "Failed to delete computer target group." $component 3
                     Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
@@ -1527,7 +1496,7 @@ Function Create-ComputerGroupFromXML{
                 $newGroup = $WSUSServer.CreateComputerTargetGroup($groupName, $ParentComputerGroup)
             }else{
                 Add-TextToCMLog $LogFile  "Group `"$($groupName)`" under parent group `"$($ParentComputerGroup.Name)`" already exists, skipping." $component 1
-                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupName}
+                $newGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupName}
             }
         }
     }
@@ -1582,12 +1551,12 @@ Function Set-WSUSConfiguration{
         Add-TextToCMLog $LogFile  "Failed to update WSUS Configuration." $component 3
         Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-        Exit $($_.Exception.HResult)  
+        Exit $($_.Exception.HResult)
     }
 }
 ##########################################################################################################
 
-Function Delete-AutomaticApprovalRule{
+Function Remove-AutomaticApprovalRule{
 ##########################################################################################################
 <#
 .SYNOPSIS
@@ -1629,7 +1598,7 @@ Function Delete-AutomaticApprovalRule{
         Add-TextToCMLog $LogFile  "Failed to delete automatic approval rule `"$($AutomaticApprovalRule.Name)`"." $component 3
         Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-        Exit $($_.Exception.HResult)  
+        Exit $($_.Exception.HResult)
     }
 }
 ##########################################################################################################
@@ -1638,7 +1607,7 @@ Function Import-WSUSConfigurationFromXML{
 ##########################################################################################################
     <#
     .SYNOPSIS
-       Import/Apply WSUS configuration from specified XML file.  
+       Import/Apply WSUS configuration from specified XML file.
        The XML file will also contains approvals for each update that will be imported on the target WSUS Server
        if approvals are included.
 
@@ -1653,7 +1622,7 @@ Function Import-WSUSConfigurationFromXML{
         Param(
             [Parameter(Mandatory=$true)]
             [string] $fileName,
-            
+
             #If $WSUSConfigOnly is true, function will not create computer groups or apply update approvals
             [switch] $WSUSConfigOnly = $false
         )
@@ -1672,7 +1641,7 @@ Function Import-WSUSConfigurationFromXML{
         [bool]$configUpdateNeeded = $false
         #WSUS Configuration that we will change and then apply to the "importing" WSUS Server.
         $WSUSConfiguration = $WSUSServer.GetConfiguration()
-        
+
         #region UpdateFiles configuration
         Add-TextToCMLog $LogFile  "Checking if update files configuration needs to be updated." $component 1
         Try{
@@ -1691,7 +1660,7 @@ Function Import-WSUSConfigurationFromXML{
         $currentGetContentFromMU = $WSUSConfiguration.GetContentFromMU
 
         if(($currentDownloadExpressPackages -ne $downloadExpressPackages) -OR ($currentDownloadUpdateBinariesAsNeeded -ne $downloadUpdateBinariesAsNeeded) -OR ($currentHostBinariesOnMicrosoftUpdate -ne $false) -OR ($currentGetContentFromMU -ne $false)){
-            
+
             Add-TextToCMLog $LogFile "Update Files configuration is different from expected values." $component 1
             Add-TextToCMLog $LogFile "DownloadExpressPackages is `"$($currentDownloadExpressPackages)`". Value expected: `"$($downloadExpressPackages)`"" $component 1
             Add-TextToCMLog $LogFile "DownloadUpdateBinariesAsNeeded is `"$($currentDownloadUpdateBinariesAsNeeded)`". Value expected: `"$($downloadUpdateBinariesAsNeeded)`"" $component 1
@@ -1699,20 +1668,20 @@ Function Import-WSUSConfigurationFromXML{
             #For Disconnected WSUS
             Add-TextToCMLog $LogFile "HostBinariesOnMicrosoftUpdate is `"$($currentHostBinariesOnMicrosoftUpdate)`". Value expected: `"$($false)`"" $component 1
             Add-TextToCMLog $LogFile "GetContentFromMU is `"$($currentGetContentFromMU)`". Value expected: `"$($false)`"" $component 1
-            
-            
+
+
             $WSUSConfiguration.HostBinariesOnMicrosoftUpdate = $false
             $WSUSConfiguration.GetContentFromMU = $false
             $WSUSConfiguration.DownloadExpressPackages = $downloadExpressPackages
             $WSUSConfiguration.DownloadUpdateBinariesAsNeeded = $downloadUpdateBinariesAsNeeded
 
-            $configUpdateNeeded = $true                      
+            $configUpdateNeeded = $true
         }else{
             Add-TextToCMLog $LogFile "WSUS Update Files configuration matches expected values." $component 1
         }
         #endregion UpdateFiles configuration
-        
-        
+
+
         #region EnabledUpdateLanguages
         $languages = Confirm-StringArray ($WSUSXMLConfig.WSUSConfiguration.GeneralConfig.UpdateFiles.EnabledUpdateLanguages.Language)
         if($languages){
@@ -1721,7 +1690,7 @@ Function Import-WSUSConfigurationFromXML{
             if($currentLanguages){
                 $diffs = Compare-Object -ReferenceObject $languages -DifferenceObject $currentLanguages
             }
-                      
+
             if(!$currentLanguages -or $diffs){ #There are differences between languagues currently used on the WSUS Server and the XML configuration file
                 Add-TextToCMLog $LogFile "Changing enabled languages to the following list: `"$($languages -join ",")`" on current WSUS Server because the current selection does not match the XML configuration file." $component 1
 
@@ -1774,7 +1743,7 @@ Function Import-WSUSConfigurationFromXML{
         }else{
             Add-TextToCMLog $LogFile  "WSUS Configuration matches expected settings, skipping WSUS configuration modification." $component 1
         }
-        
+
 
         #region ApprovalRules
 
@@ -1782,7 +1751,7 @@ Function Import-WSUSConfigurationFromXML{
         if($currentRules){
             Add-TextToCMLog $LogFile "Automatic approval rules are configured, will attempt to remove the rules." $component 1
             foreach($rule in $currentRules){
-                Delete-AutomaticApprovalRule -AutomaticApprovalRule $rule
+                Remove-AutomaticApprovalRule -AutomaticApprovalRule $rule
                 Start-Sleep -Seconds 5
             }
         }else{
@@ -1795,22 +1764,22 @@ Function Import-WSUSConfigurationFromXML{
             Add-TextToCMLog $LogFile "Creating missing computer groups, if needed." $component 1
             [System.Xml.XmlElement]$computerGroups = $WSUSXMLConfig.WSUSConfiguration.ComputerGroups
             if($computerGroups){
-            
+
                 [System.Xml.XmlElement]$allComputersGroupElement = $computerGroups.ComputerGroup
                 $allComputersGroupName = "All Computers"
 
                 #Verify that the first computer group is "All Computers"
                 if($($allComputersGroupElement.'#text') -eq $allComputersGroupName){
                     $subGroups = $allComputersGroupElement.ComputerGroup
-                
-                    $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq "All Computers"}
 
-                    $currentAllComputersSubGroups = $WSUSServer.GetComputerTargetGroups() | Where {($_.Name -ne "All Computers") -and ($_.GetParentTargetGroup() -eq $allComputersGroup)} | Select-Object -ExpandProperty Name
+                    $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq "All Computers"}
+
+                    #$currentAllComputersSubGroups = $WSUSServer.GetComputerTargetGroups() | Where-Object {($_.Name -ne "All Computers") -and ($_.GetParentTargetGroup() -eq $allComputersGroup)} | Select-Object -ExpandProperty Name
                     foreach($subGroup in $subGroups){
                         if($subGroup -is [System.Xml.XmlElement]){#Computer group has sub groups
-                            Create-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupElement $subGroup
+                            New-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupElement $subGroup
                         }elseif($subGroup -is [String]){#Computer Group does not have any child groups
-                            Create-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupName $subGroup
+                            New-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupName $subGroup
                         }
                         else{
                             Add-TextToCMLog $LogFile "Information on child group `"$($subGroup)`" under All Computers XML element is neither an XMLElement or a String, please verify XML file." $component 2
@@ -1832,18 +1801,18 @@ Function Import-WSUSConfigurationFromXML{
 
                 [System.Xml.XmlElement]$approvals = $WSUSXMLConfig.WSUSConfiguration.ApprovedUpdates
                 if($approvals){
-                
+
                     $approvedUpdatesID = ($approvals.ChildNodes).ID
 
                     if($approvedUpdatesID){
                         Add-TextToCMLog $LogFile "Getting all updates from WSUS Server $($WSUSFQDN)." $component 1
-                        
+
                         $AllUpdates = Get-WSUSUpdates -WSUSServer $WSUSServer
                         #$AllUpdates = $WSUSServer.GetUpdates()
-                    
+
                         Add-TextToCMLog $LogFile "Declining all updates that are not in the approved updates list from the XML file." $component 1
                         Try{
-                            $UpdatesToDecline = $AllUpdates | Where {($_.IsDeclined -eq $false) -and ($_.id.UpdateID.Guid -notin $approvedUpdatesID)}
+                            $UpdatesToDecline = $AllUpdates | Where-Object {($_.IsDeclined -eq $false) -and ($_.id.UpdateID.Guid -notin $approvedUpdatesID)}
                             foreach($update in $UpdatesToDecline){
                                 #Invoke-WSUSSyncCheck $WSUSServer
                                 $update.Decline($true) | Out-Null
@@ -1860,18 +1829,18 @@ Function Import-WSUSConfigurationFromXML{
                         [int]$minsToWait = 2
                         Add-TextToCMLog $LogFile "Waiting $($minsToWait) minutes for WSUS Server to process the changes." $component 1
                         Start-Sleep -Seconds ($minsToWait*60)
-                        
+
 
                         Add-TextToCMLog $LogFile "Approving updates for each applicable computer group." $component 1
                         Try{
                             foreach($update in ($approvals.ChildNodes)){
-                                $wsusUpdate = $AllUpdates | Where {$_.id.UpdateID.Guid -eq $update.ID}
+                                $wsusUpdate = $AllUpdates | Where-Object {$_.id.UpdateID.Guid -eq $update.ID}
                                 $updateTitle = $wsusUpdate | Select-Object -ExpandProperty Title
-                            
+
                                 $update.ComputerGroups.ComputerGroup | ForEach-Object{
                                     Add-TextToCMLog $LogFile "Approving update $($updateTitle) for computer group `"$($_)`"." $component 1
                                     $groupName = $_
-                                    $group = $WSUSServer.GetComputerTargetGroups() | Where {$_.Name -eq $groupname}
+                                    $group = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupname}
 
                                     if($wsusUpdate.RequiresLicenseAgreementAcceptance){
                                         $wsusUpdate.AcceptLicenseAgreement()
@@ -1890,7 +1859,7 @@ Function Import-WSUSConfigurationFromXML{
                         Start-Sleep -Seconds ($minsToWait*60)
                     }else{
                         Add-TextToCMLog $LogFile "Updates approvals are empty." $component 2
-                    }  
+                    }
                 }else{
                     Add-TextToCMLog $LogFile "No updates approvals found in XML file, skipping approvals." $component 2
                 }
@@ -1915,8 +1884,8 @@ function Start-ConsoleProcess
     and capture StandardOutput/StandardError streams and exit code.
     It returns object with following properties:
 
-    StdOut - array of strings captured from StandardOutput 
-    StdErr - array of strings captured from StandardError 
+    StdOut - array of strings captured from StandardOutput
+    StdErr - array of strings captured from StandardError
     ExitCode - exit code set by executable
 
 .Parameter FilePath
@@ -1973,19 +1942,19 @@ function Start-ConsoleProcess
     Copyright (C) 1999-2013 Microsoft Corporation.
     On computer: HAL9000
 
-    DISKPART> 
+    DISKPART>
       Disk ###  Status         Size     Free     Dyn  Gpt
       --------  -------------  -------  -------  ---  ---
-      Disk 0    Online          298 GB      0 B         
+      Disk 0    Online          298 GB      0 B
 
-    DISKPART> 
+    DISKPART>
       Volume ###  Ltr  Label        Fs     Type        Size     Status     Info
       ----------  ---  -----------  -----  ----------  -------  ---------  --------
-      Volume 0     E                       DVD-ROM         0 B  No Media           
-      Volume 1     C   System       NTFS   Partition    100 GB  Healthy    System  
-      Volume 2     D   Storage      NTFS   Partition    198 GB  Healthy            
+      Volume 0     E                       DVD-ROM         0 B  No Media
+      Volume 1     C   System       NTFS   Partition    100 GB  Healthy    System
+      Volume 2     D   Storage      NTFS   Partition    198 GB  Healthy
 
-    DISKPART> 
+    DISKPART>
 
 .Example
     Start-ConsoleProcess -FilePath robocopy -ArgumentList 'C:\Src', 'C:\Dst', '/mir'
@@ -2000,7 +1969,7 @@ function Start-ConsoleProcess
     PS > $Result.StdOut
 
     -------------------------------------------------------------------------------
-       ROBOCOPY     ::     Robust File Copy for Windows                              
+       ROBOCOPY     ::     Robust File Copy for Windows
     -------------------------------------------------------------------------------
 
       Started : 01 January 2016 y. 00:00:01
@@ -2008,15 +1977,15 @@ function Start-ConsoleProcess
          Dest : C:\Dst\
 
         Files : *.*
-	    
-      Options : *.* /S /E /DCOPY:DA /COPY:DAT /PURGE /MIR /R:1000000 /W:30 
+
+      Options : *.* /S /E /DCOPY:DA /COPY:DAT /PURGE /MIR /R:1000000 /W:30
 
     ------------------------------------------------------------------------------
 
 	                       1	C:\Src\
 	        New File  		       6	Readme.txt
-      0%  
-    100%  
+      0%
+    100%
 
     ------------------------------------------------------------------------------
 
@@ -2130,10 +2099,10 @@ function Invoke-Robocopy
 .Parameter PassThru
     Switch. Returns an object with the following properties:
 
-    StdOut - array of strings captured from StandardOutput 
-    StdErr - array of strings captured from StandardError 
+    StdOut - array of strings captured from StandardOutput
+    StdErr - array of strings captured from StandardError
     ExitCode - Enum with Robocopy exit code in human-readable format
-    
+
     By default, this function doesn't generate any output.
 
 .Link
@@ -2229,7 +2198,7 @@ function Invoke-Robocopy
             # Invoke Robocopy
             $Result = Start-ConsoleProcess -FilePath 'robocopy.exe' -ArgumentList $AllArguments
             $Result.ExitCode = [Robocopy.ExitCode]$Result.ExitCode
-    
+
             # Dump Robocopy log to Verbose stream
             $Result.StdOut | Write-Verbose
 
@@ -2292,7 +2261,7 @@ function Reset-WsusDatabase{
     .SYNOPSIS
         This function DROPS (delete) the WSUS Database and recreates the database.
         This function is usually run before importing WSUS Metadata for a clean import.
-       
+
     .DESCRIPTION
        After a couple of tests of various disconnected WSUS instances, the most reliable way to make sure
        that WSUS successfully reconciles approved updates with WSUS Content available seems to be to wipe
@@ -2332,7 +2301,7 @@ function Reset-WsusDatabase{
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
         Exit $($_.Exception.HResult)
     }
-                
+
     #Connect to the database server and drop SUSDB
     Try{
         Add-TextToCMLog $LogFile "Connecting to database server `"$($ServerInstance)`" and dropping database `"$($WSUSServerDB.DatabaseName)`"." $component 1
@@ -2348,9 +2317,9 @@ GO
         if($($WSUSServerDB.DatabaseName) -ne "SUSDB"){
             $tsql = $tsql -replace "SUSDB","$($WSUSServerDB.DatabaseName)"
         }
-                   
+
         Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Query $tsql -ParseGO
-                    
+
         Add-TextToCMLog $LogFile "Done dropping database `"$($WSUSServerDB.DatabaseName)`"." $component 1
     }
     Catch{
@@ -2362,13 +2331,13 @@ GO
 
     Try{
         Add-TextToCMLog $LogFile "Running wsusutil postinstall to re-create the WSUS database." $component 1
-                
+
         if($WSUSServerDB.IsUsingWindowsInternalDatabase){#WID
             $result = Start-ConsoleProcess -FilePath $($Wsusutil.FullName) -ArgumentList "postinstall","CONTENT_DIR=`"$($CurrentWSUSContentDir)`""
         }else{#Actual SQL Server
             $result = Start-ConsoleProcess -FilePath $($Wsusutil.FullName) -ArgumentList "postinstall","SQL_INSTANCE_NAME=`"$($ServerInstance)`"","CONTENT_DIR=`"$($CurrentWSUSContentDir)`""
         }
-                    
+
         if($result.ExitCode -eq 0){
             Add-TextToCMLog $LogFile "WSUS Postinstall configuration was successful." $component 1
             if($result.StdOut){Add-TextToCMLog $LogFile "Output message: $($result.StdOut)" $component 1}
@@ -2433,16 +2402,16 @@ Function Reset-WSUSServer{
         [int]$i = 1
         [bool]$ApprovedUpdatesReady = $false
         do{
-            #$ApprovedUpdates = $WSUSServer.GetUpdates() | Where {$_.IsApproved}
-            $ApprovedUpdates = Get-WSUSUpdates -WSUSServer $WSUSServer | Where {$_.IsApproved}
-            
-            $ready = $ApprovedUpdates | Where {$_.State -eq "Ready"}
-            
+            #$ApprovedUpdates = $WSUSServer.GetUpdates() | Where-Object {$_.IsApproved}
+            $ApprovedUpdates = Get-WSUSUpdates -WSUSServer $WSUSServer | Where-Object {$_.IsApproved}
+
+            $ready = $ApprovedUpdates | Where-Object {$_.State -eq "Ready"}
+
             if(($($ready.count) -eq $($ApprovedUpdates.count))){
                 $ApprovedUpdatesReady = $true
             }else{
                 Add-TextToCMLog $LogFile "$($ready.count)`/$($ApprovedUpdates.count) updates ready." $component 1
-                $i++        
+                $i++
                 Start-Sleep -Seconds ($MinsToWait*60)
             }
         }while(!$ApprovedUpdatesReady -and ($i -lt $MaxIterations))
@@ -2463,188 +2432,93 @@ Function Reset-WSUSServer{
 }
 ##########################################################################################################
 
-Function Set-EulaDownloadedInSUSDB{
-##########################################################################################################
-    <#
-    .SYNOPSIS
-        Resolves reoccuring issues where WSUS thinks that the EULA files are not download.
-        This function will modify the SUSDB to indicate that any EULA has been downloaded and then start a
-        WSUS Reset.
-       
-    .DESCRIPTION
-       After a couple of tests of various disconnected WSUS instances, we had some issues where we could
-       not approve updates because WSUS thinks the EULA files were not downloaded, even though they were...
-
-       Yes, it's not the greatest solution. I hate WSUS.
-    #>
-##########################################################################################################
-    Add-TextToCMLog $LogFile "Forcefully setting EULAs as downloaded in the database." $component 1
-
-    $WsusUtil = Get-WSUSUtil
-    #Reusing logic in Connect-WSUSDB function to identify the server instance.
-    If ($WSUSServerDB.IsUsingWindowsInternalDatabase){
-        #Using the Windows Internal Database.
-        If($WSUSServerDB.ServerName -eq "MICROSOFT##WID"){
-            $ServerInstance = "\\.\pipe\MICROSOFT##WID\tsql\query"
-        }
-        Else{
-            $ServerInstance = "\\.\pipe\MICROSOFT##WID\tsql\query"
-        }
-    }
-    Else{
-        #SQL Server
-        $ServerInstance = "$($WSUSServerDB.ServerName)"
-    }
-
-                   
-    #Connect to the database server and drop SUSDB
-    Try{
-        Add-TextToCMLog $LogFile "Connecting to database server `"$($ServerInstance)`" and modifying database `"$($WSUSServerDB.DatabaseName)`"." $component 1
-        
-        $tsql ="UPDATE tbFileOnServer SET ActualState = 12 FROM tbFileOnServer fos INNER JOIN tbFile f ON fos.FileDigest = f.FileDigest WHERE f.IsEula = 1"
-
-        #If Database name is different from default of SUSDB (for some unknown/unsupported reason)
-        if($($WSUSServerDB.DatabaseName) -ne "SUSDB"){
-            $tsql = $tsql -replace "SUSDB","$($WSUSServerDB.DatabaseName)"
-        }
-                   
-        Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Database "$($WSUSServerDB.DatabaseName)" -Query $tsql
-                    
-        Add-TextToCMLog $LogFile "Done modifying database `"$($WSUSServerDB.DatabaseName)`"." $component 1
-    }
-    Catch{
-        Add-TextToCMLog $LogFile "Failed modifying `"$($WSUSServerDB.DatabaseName)`" for WSUS instance `"$($WSUSServer.name)`"." $component 3
-        Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
-        Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-        Exit $($_.Exception.HResult)
-    }
-    Add-TextToCMLog $LogFile "Done forcefully setting EULAs as downloaded." $component 1
-}
-##########################################################################################################
-
 Function Set-IISWsusPoolConfiguration{
 ##########################################################################################################
     <#
     .SYNOPSIS
-        If the WSUS Pool is using default values. This function modifies values according to a best
-        practice article by Microsoft.
-        If the value is different from the default value, the function does not modify the value.
-       
+        Modifies the IIS Pool for WSUS with the specified parameters.
+
+
     .DESCRIPTION
-       Checks if the IIS application pool for WSUS is using default values and changes them according to
-       this reference document:
-       https://support.microsoft.com/en-ae/help/4490414/windows-server-update-services-best-practices
-                
-        Summary:
+        Checks if the IIS application pool for WSUS is using default values and changes them according to
+        specified values. If the IIS pool is not using default values, it will not change them unless
+        the -Force switch is used.
+
+        Recommended values by Microsoft: https://support.microsoft.com/en-ae/help/4490414/windows-server-update-services-best-practices
         Queue Length = 2000 (up from default of 1000)
         Idle Time-out (minutes) = 0 (down from the default of 20)
         Ping Enabled = False (from default of True)
         Private Memory Limit (KB) = 0 (unlimited, up from the default of 1843200 KB)
         Regular Time Interval (minutes) = 0 (to prevent a recycle, and modified from the default of 1740)
+
+        These are the default values for the parameters used by the function.
     #>
 ##########################################################################################################
     Param
     (
         [Parameter(Mandatory = $false)]
-        [switch]$ForceWSUSPoolBestPractices
+        [string]$WSUSPoolName = "WsusPool",
+        [Parameter(Mandatory = $false)]
+        [int64]$QueueLength = 2000,
+        [Parameter(Mandatory = $false)]
+        [System.TimeSpan]$IdleTimeout = (New-TimeSpan -Minutes 0),
+        [Parameter(Mandatory = $false)]
+        [bool]$PingEnabled = $false,
+        [Parameter(Mandatory = $false)]
+        [int64]$PrivateMemoryLimit = 0,
+        [Parameter(Mandatory = $false)]
+        [System.TimeSpan]$RegularTimeInterval = (New-TimeSpan -Minutes 0)
     )
     Try{
-        $WSUSPoolName = "WsusPool"
-        Add-TextToCMLog $LogFile "Checking IIS Application Pool `"$($WSUSPoolName)`" against recommended values." $component 1
-        #Default values
+        Add-TextToCMLog $LogFile "Checking IIS Application Pool `"$($WSUSPoolName)`"." $component 1
+
+        <#
+        #Default values of the IIS WSUS Pool
         [int64]$DefaultQueueLength = 1000
         [System.TimeSpan]$DefaultIdleTimeout = (New-TimeSpan -Minutes 20)
         [bool]$DefaultPingEnabled = $true
         [int64]$DefaultPrivateMemoryLimit = 1843200
         [System.TimeSpan]$DefaultRegularTimeInterval = (New-TimeSpan -Minutes 1740)
-
-        #Best Practices values
-        [int64]$BPQueueLength = 2000
-        [System.TimeSpan]$BPIdleTimeout = (New-TimeSpan -Minutes 0)
-        [bool]$BPPingEnabled = $false
-        [int64]$BPPrivateMemoryLimit = 0
-        [System.TImeSpan]$BPRegularTimeInterval = (New-TimeSpan -Minutes 0)
-
+        #>
 
         Import-Module WebAdministration -Force #Make sure the IIS: drive is available.
         $configChanged = $false
 
         [int64]$currentQueueLength = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "queueLength" | Select-Object -ExpandProperty Value
         [System.TimeSpan]$currentIdleTimeout = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.idleTimeout" | Select-Object -ExpandProperty Value
-        [bool]$CurrentPingEnabled = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.pingingEnabled" | Select-Object -ExpandProperty Value
+        [bool]$currentPingEnabled = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.pingingEnabled" | Select-Object -ExpandProperty Value
         [int64]$currentPrivateMemoryLimit = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.privateMemory" | Select-Object -ExpandProperty Value
         [System.TimeSpan]$currentRegularTimeInterval = Get-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.time" | Select-Object -ExpandProperty Value
 
-        if($ForceWSUSPoolBestPractices){#Change values if not using best practices values
-            Add-TextToCMLog $LogFile "Force best practices selected, changing values to best practices if value doesn't match best practices." $component 1
-            if($currentQueueLength -ne $BPQueueLength){
-                Add-TextToCMLog $LogFile "Changing Queue Length from value of `"$($currentQueueLength)`" to `"$($BPQueueLength)`"." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name queueLength -Value $BPQueueLength
-                $configChanged = $true
-            }
 
-            
-            if($currentIdleTimeout -ne $BPIdleTimeout){
-                Add-TextToCMLog $LogFile "Changing Idle Time-out from value of `"$($currentIdleTimeout.TotalMinutes)`" minutes to `"$($BPIdleTimeout.TotalMinutes)`" minutes." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.idleTimeout" -Value $BPIdleTimeout
-                $configChanged = $true
-            }
+        if($currentQueueLength -ne $QueueLength){
+            Add-TextToCMLog $LogFile "Changing queue length from `"$($currentQueueLength)`" to `"$($QueueLength)`"." $component 1
+            Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name queueLength -Value $QueueLength
+            $configChanged = $true
+        }
 
-            
-            if($CurrentPingEnabled -ne $BPPingEnabled){
-                Add-TextToCMLog $LogFile "Changing Ping Enabled from value of `"$($CurrentPingEnabled)`" to `"$($BPPingEnabled)`"." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.pingingEnabled" -Value $BPPingEnabled
-                $configChanged = $true
-            }
+        if($currentIdleTimeout -ne $IdleTimeout){
+            Add-TextToCMLog $LogFile "Changing Idle Time-out from `"$($currentIdleTimeout.TotalMinutes)`" minutes to `"$($IdleTimeout.TotalMinutes)`" minutes." $component 1
+            Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.idleTimeout" -Value $IdleTimeout
+            $configChanged = $true
+        }
 
-            
-            if($currentPrivateMemoryLimit -ne $BPPrivateMemoryLimit){
-                Add-TextToCMLog $LogFile "Changing Private Memory Limit from value of $($currentPrivateMemoryLimit) to $($BPPrivateMemoryLimit)." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.privateMemory" -Value $BPPrivateMemoryLimit
-                $configChanged = $true
-            }
+        if($currentPingEnabled -ne $PingEnabled){
+            Add-TextToCMLog $LogFile "Changing Ping Enabled from `"$($currentPingEnabled)`" to `"$($PingEnabled)`"." $component 1
+            Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.pingingEnabled" -Value $PingEnabled
+            $configChanged = $true
+        }
 
-            
-            if($currentRegularTimeInterval -ne $BPRegularTimeInterval){
-                Add-TextToCMLog $LogFile "Changing Regular Time Interval from value of `"$($currentRegularTimeInterval.TotalMinutes)`" minutes to `"$($BPRegularTimeInterval.TotalMinutes)`" minutes." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.time" -Value $BPRegularTimeInterval
-                $configChanged = $true
-            }
-        }else{#Only change values if using the default values
-            Add-TextToCMLog $LogFile "Force best practices not selected, only changing default values to best practices." $component 1
-            if($currentQueueLength -eq $DefaultQueueLength){
-                Add-TextToCMLog $LogFile "Changing Queue Length from default value of `"$($DefaultQueueLength)`" to `"$($BPQueueLength)`"." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name queueLength -Value $BPQueueLength
-                $configChanged = $true
-            }
+        if($currentPrivateMemoryLimit -ne $PrivateMemoryLimit){
+            Add-TextToCMLog $LogFile "Changing Private Memory Limit from $($currentPrivateMemoryLimit) to $($PrivateMemoryLimit)." $component 1
+            Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.privateMemory" -Value $PrivateMemoryLimit
+            $configChanged = $true
+        }
 
-            
-            if($currentIdleTimeout -eq $DefaultIdleTimeout){
-                Add-TextToCMLog $LogFile "Changing Idle Time-out from default value of `"$($DefaultIdleTimeout.TotalMinutes)`" minutes to `"$($BPIdleTimeout.TotalMinutes)`" minutes." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.idleTimeout" -Value $BPIdleTimeout
-                $configChanged = $true
-            }
-
-            
-            if($CurrentPingEnabled -eq $DefaultPingEnabled){
-                Add-TextToCMLog $LogFile "Changing Ping Enabled from default value of `"$($DefaultPingEnabled)`" to `"$($BPPingEnabled)`"." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "processModel.pingingEnabled" -Value $BPPingEnabled
-                $configChanged = $true
-            }
-
-            
-            if($currentPrivateMemoryLimit -eq $DefaultPrivateMemoryLimit){
-                Add-TextToCMLog $LogFile "Changing Private Memory Limit from default value of $($DefaultPrivateMemoryLimit) to $($BPPrivateMemoryLimit)." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.privateMemory" -Value $BPPrivateMemoryLimit
-                $configChanged = $true
-            }
-
-            
-            if($currentRegularTimeInterval -eq $DefaultRegularTimeInterval){
-                Add-TextToCMLog $LogFile "Changing Regular Time Interval from default value of `"$($DefaultRegularTimeInterval.TotalMinutes)`" minutes to `"$($BPRegularTimeInterval.TotalMinutes)`" minutes." $component 1
-                Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.time" -Value $BPRegularTimeInterval
-                $configChanged = $true
-            }
+        if($currentRegularTimeInterval -ne $RegularTimeInterval){
+            Add-TextToCMLog $LogFile "Changing Regular Time Interval from `"$($currentRegularTimeInterval.TotalMinutes)`" minutes to `"$($RegularTimeInterval.TotalMinutes)`" minutes." $component 1
+            Set-ItemProperty -Path "IIS:\AppPools\$($WSUSPoolName)" -Name "recycling.periodicrestart.time" -Value $RegularTimeInterval
+            $configChanged = $true
         }
 
         if($configChanged){
@@ -2831,9 +2705,9 @@ Function Show-LocallyPublishedUpdates {
         Try{
             Add-TextToCMLog $LogFile "Updating database to show locally published updates in WSUS." $component 1
             $tsql = "UPDATE [dbo].[tbUpdate] SET IsLocallyPublished = 0 WHERE IsLocallyPublished = 1"
-            
+
             Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Database $($WSUSServerDB.DatabaseName) -Query $tsql
-                    
+
             Add-TextToCMLog $LogFile "Done updating database." $component 1
         }
         Catch{
@@ -2846,7 +2720,7 @@ Function Show-LocallyPublishedUpdates {
 ##########################################################################################################
 #endregion Functions
 
-$scriptVersion = "0.8.1"
+$scriptVersion = "0.9"
 $mainComponent = "Invoke-WSUSImportExportManager"
 $component = $mainComponent
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
@@ -2858,12 +2732,8 @@ $IndexArray = @{
                 }
 
 $IsXMLConfigSelected = $false
-$XMLConfigFileName = "WSUSConfig.xml"
-
 $IsMetadataSelected = $false
-$MetadataFilename = "WSUSMetadata.xml.gz"
 $IsImportingMetadataWithoutXMLFile = $false
-
 $IsWSUSContentSelected = $false
 
 
@@ -2917,13 +2787,13 @@ $LogFile = "filesystem::$($LogFile)"
 Try{
     $MaxLogSize = [int]$Xml.Configuration.MaxLogSize
 }Catch{}
-If(($MaxLogSize -eq $null) -or ($MaxLogSize -eq 0)){
+If(($null -eq $MaxLogSize) -or ($MaxLogSize -eq 0)){
     #Use Default MaxLogSize
     $MaxLogSize = [int]2621440
 }
 
 #If the log file exists and is larger then the maximum then roll it over.
-If (Test-path  $LogFile -PathType Leaf) {    
+If (Test-path  $LogFile -PathType Leaf) {
     If ((Get-Item $LogFile).length -gt $MaxLogSize){
         Move-Item -Force $LogFile ($LogFile -replace ".$","_") -WhatIf:$False
     }
@@ -2940,37 +2810,54 @@ Try{
 
     #Actions
     $Actions = $Xml.Configuration.Actions.Action
-    [bool]$Import = (($Actions | Where {$_.Name -eq "Import"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-    [bool]$Export = (($Actions | Where {$_.Name -eq "Export"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-    [bool]$ReindexSUSDB = (($Actions | Where {$_.Name -eq "ReindexSUSDB"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-    [bool]$UseCustomIndexes = (($Actions | Where {$_.Name -eq "UseCustomIndexes"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-    [bool]$RemoveCustomIndexes = (($Actions | Where {$_.Name -eq "RemoveCustomIndexes"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-
-    [bool]$ChangeIISWSUSPoolSettings = (($Actions | Where {$_.Name -eq "ChangeIISWSUSPoolSettings"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-    [bool]$ForceWSUSPoolBestPractices = (($Actions | Where {$_.Name -eq "ChangeIISWSUSPoolSettings"} | Select-Object -ExpandProperty Force) -eq [bool]::TrueString)
-
-    [bool]$ShowLocallyPublishedUpdates = (($Actions | Where {$_.Name -eq "ShowLocallyPublishedUpdates"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
-
-
-    #Import/Export parameters
-    $TargetDir = $Xml.Configuration.ImportExportOptions.Option | Where {$_.Name -eq "TargetDir"} | Select-Object -ExpandProperty Location
-
-    if($Import){
-        $ImportOptions = $Xml.Configuration.ImportExportOptions.ImportOptions.Option
-        [bool]$IsWSUSContentSelected = (($ImportOptions | Where {$_.Name -eq "WSUSContent"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$IsMetadataSelected = (($ImportOptions | Where {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$DropSUSDB = (($ImportOptions | Where {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty DropSUSDB)  -eq [bool]::TrueString)
-        [bool]$SetEulaDownloaded = (($ImportOptions | Where {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty SetEulaDownloaded)  -eq [bool]::TrueString)
-        [bool]$IsXMLConfigSelected = (($ImportOptions | Where {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$IncludeApprovals = (($ImportOptions | Where {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty IncludeApprovals)  -eq [bool]::TrueString)
+    [bool]$Import = (($Actions | Where-Object {$_.Name -eq "Import"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+    If($Import){
+        $ImportOptions = ($Actions | Where-Object {$_.Name -eq "Import"}).Option
+        [string]$SourceDir = $ImportOptions | Where-Object {$_.Name -eq "SourceDir"} | Select-Object -ExpandProperty Location
+        [bool]$IsWSUSContentSelected = (($ImportOptions | Where-Object {$_.Name -eq "WSUSContent"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        [bool]$IsMetadataSelected = (($ImportOptions | Where-Object {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        if($IsMetadataSelected){
+            [string]$MetadataFilename = $ImportOptions | Where-Object {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Filename
+            [bool]$DropSUSDB = (($ImportOptions | Where-Object {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty DropSUSDB) -eq [bool]::TrueString)
+        }
+        [bool]$IsXMLConfigSelected = (($ImportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        if($IsXMLConfigSelected){
+            [string]$XMLConfigFileName = $ImportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Filename
+            [bool]$IncludeApprovals = (($ImportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty IncludeApprovals) -eq [bool]::TrueString)
+        }
     }
+    [bool]$Export = (($Actions | Where-Object {$_.Name -eq "Export"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
     If($Export){
-        $ExportOptions = $Xml.Configuration.ImportExportOptions.ExportOptions.Option
-        [bool]$IsWSUSContentSelected = (($ExportOptions | Where {$_.Name -eq "WSUSContent"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$IsMetadataSelected = (($ExportOptions | Where {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$IsXMLConfigSelected = (($ExportOptions | Where {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Enabled)  -eq [bool]::TrueString)
-        [bool]$IncludeApprovals = (($ExportOptions | Where {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty IncludeApprovals)  -eq [bool]::TrueString)
+        $ExportOptions = ($Actions | Where-Object {$_.Name -eq "Export"}).Option
+        [string]$DestinationDir = $ExportOptions | Where-Object {$_.Name -eq "DestinationDir"} | Select-Object -ExpandProperty Location
+        [bool]$IsWSUSContentSelected = (($ExportOptions | Where-Object {$_.Name -eq "WSUSContent"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        [bool]$IsMetadataSelected = (($ExportOptions | Where-Object {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        if($IsMetadataSelected){
+            [string]$MetadataFilename = $ExportOptions | Where-Object {$_.Name -eq "Metadata"} | Select-Object -ExpandProperty Filename
+        }
+        [bool]$IsXMLConfigSelected = (($ExportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+        if($IsXMLConfigSelected){
+            [string]$XMLConfigFileName = $ExportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty Filename
+            [bool]$IncludeApprovals = (($ExportOptions | Where-Object {$_.Name -eq "XMLConfiguration"} | Select-Object -ExpandProperty IncludeApprovals) -eq [bool]::TrueString)
+        }
     }
+    [bool]$ReindexSUSDB = (($Actions | Where-Object {$_.Name -eq "ReindexSUSDB"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+    [bool]$UseCustomIndexes = (($Actions | Where-Object {$_.Name -eq "UseCustomIndexes"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+    [bool]$RemoveCustomIndexes = (($Actions | Where-Object {$_.Name -eq "RemoveCustomIndexes"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+
+    [bool]$SetIISWSUSPoolSettings = (($Actions | Where-Object {$_.Name -eq "SetIISWSUSPoolSettings"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+    If($SetIISWSUSPoolSettings){
+        $PoolSettings = ($Actions | Where-Object {$_.Name -eq "SetIISWSUSPoolSettings"}).PoolSetting
+        [string]$WSUSPoolName = ($PoolSettings | Where-Object {$_.Name -eq "WSUSPoolName"}).InnerText
+        [int64]$QueueLength = ($PoolSettings | Where-Object {$_.Name -eq "QueueLength"}).InnerText
+        [TimeSpan]$IdleTimeout = New-TimeSpan -Minutes  ([int](($PoolSettings | Where-Object {$_.Name -eq "IdleTimeout"}).InnerText))
+        [bool]$PingEnabled = ((($PoolSettings | Where-Object {$_.Name -eq "PingEnabled"}).InnerText) -eq [bool]::TrueString)
+        [int64]$PrivateMemoryLimit = ($PoolSettings | Where-Object {$_.Name -eq "PrivateMemoryLimit"}).InnerText
+        [TimeSpan]$RegularTimeInterval = New-TimeSpan -Minutes  ([int](($PoolSettings | Where-Object {$_.Name -eq "RegularTimeInterval"}).InnerText))
+    }
+
+    [bool]$ShowLocallyPublishedUpdates = (($Actions | Where-Object {$_.Name -eq "ShowLocallyPublishedUpdates"} | Select-Object -ExpandProperty Enabled) -eq [bool]::TrueString)
+
 }Catch{
     Add-TextToCMLog $LogFile  "Error validating configuration file settings." $component 3
     Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
@@ -2981,8 +2868,8 @@ Try{
 
 
 #Make sure at least one action parameter was given.
-If (!$UseCustomIndexes -and !$RemoveCustomIndexes -and !$Export -and !$Import -and !$ReindexSUSDB -and !$ChangeIISWSUSPoolSettings -and !$ShowLocallyPublishedUpdates) {
-    Add-TextToCMLog $LogFile "You must choose one of the action parameters: Import, Export, UseCustomIndexes, RemoveCustomIndexes, ReindexSUSDB, ChangeIISWSUSPoolSettings or ShowLocallyPublishedUpdates" $component 3
+If (!$UseCustomIndexes -and !$RemoveCustomIndexes -and !$Export -and !$Import -and !$ReindexSUSDB -and !$SetIISWSUSPoolSettings -and !$ShowLocallyPublishedUpdates) {
+    Add-TextToCMLog $LogFile "You must choose one of the action parameters: Import, Export, UseCustomIndexes, RemoveCustomIndexes, ReindexSUSDB, SetIISWSUSPoolSettings or ShowLocallyPublishedUpdates" $component 3
     Exit 1
 }
 
@@ -3000,56 +2887,50 @@ If ($Export -and $Import){
 
 #If importing or exporting, make sure the required arguments are also specified
 If($Export -or $Import){
-    #Validate Import/Export options    
+    #Validate Import/Export options
     if(!$IsXMLConfigSelected -and !$IsMetadataSelected -and !$IsWSUSContentSelected){
         Add-TextToCMLog $LogFile "If using Import or Export, you need to select at least one component to import or export, valid options are: XMLConfig, Metadata, WSUSContent" $component 3
         Exit 1
     }
-    #Validate target directory
-    If(!$TargetDir){
-        Add-TextToCMLog $LogFile "You must specify a valid target directory which will be used for the import or export process." $component 3
-        Exit 1
-    }else{
-        if($TargetDir.StartsWith(".")){
-            Add-TextToCMLog $LogFile "Target Directory (Variable name:TargetDir) starts with a `".`", assuming target directory is a subfolder of the script path." $component 1
-            $targetDir = Join-Path $scriptPath $targetDir.Substring(1,$targetDir.Length-1)
-            Add-TextToCMLog $LogFile "Target Directory (`$TargetDir) is now `"$($TargetDir)`"." $component 1
+    #Validate directory
+    If($Import){
+        If(!$SourceDir){
+            Add-TextToCMLog $LogFile "You must specify a valid source directory which will be used for the import process." $component 3
+            Exit 1
         }
-        if(!(Test-Path $TargetDir)){
-            If($Export){
-                #Create the folder
-                Try{
-                    New-Item -ItemType Directory -Path $TargetDir -ErrorAction Stop | Out-Null
-                } Catch{
-                    Add-TextToCMLog $LogFile  "Could not create folder at `"$($targetDir)`"." $component 3
-                    Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
-                    Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-                    Exit $($_.Exception.HResult)
-                }
-            }elseif($Import){
-                Add-TextToCMLog $LogFile  "Folder `"$($targetDir)`" could not be found." $component 3
-                Exit 1
-            }
+        if($SourceDir.StartsWith(".")){
+            Add-TextToCMLog $LogFile "Source directory starts with a `".`", assuming source directory is a subfolder of the script path." $component 1
+            $SourceDir = Join-Path $scriptPath $SourceDir.Substring(1,$SourceDir.Length-1)
+            Add-TextToCMLog $LogFile "Source Directory is now `"$($SourceDir)`"." $component 1
         }
-
-        #Is it a folder?
-        Try{
-            $TargetDirItem = Get-Item $TargetDir -ErrorAction Stop
-            if(!(($TargetDirItem.GetType()).Name -eq "DirectoryInfo")){
-                Add-TextToCMLog $LogFile "Target Directory $($TargetDir) is not a directory. Type is $(($TargetDirItem.GetType()).Name), expected `"DirectoryInfo`"" $component 3
-                Exit 1
+        If(!(Test-Path $SourceDir -PathType Container)){
+            Add-TextToCMLog $LogFile  "Folder `"$($SourceDir)`" could not be found or is not a folder." $component 3
+            Exit 1
+        }
+    }elseif($Export){
+        If(!$DestinationDir){
+            Add-TextToCMLog $LogFile "You must specify a valid source directory which will be used for the export process." $component 3
+            Exit 1
+        }
+        if($DestinationDir.StartsWith(".")){
+            Add-TextToCMLog $LogFile "Destination directory starts with a `".`", assuming destination directory is a subfolder of the script path." $component 1
+            $DestinationDir = Join-Path $scriptPath $DestinationDir.Substring(1,$DestinationDir.Length-1)
+            Add-TextToCMLog $LogFile "Destination Directory is now `"$($DestinationDir)`"." $component 1
+        }
+        If(!(Test-Path $DestinationDir -PathType Container)){
+            Try{
+                Remove-Item -Path $DestinationDir -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Path $DestinationDir -ErrorAction Stop | Out-Null
+            } Catch{
+                Add-TextToCMLog $LogFile  "Could not create folder `"$($DestinationDir)`"" $component 3
+                Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
+                Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
+                Exit $($_.Exception.HResult)
             }
-        } Catch{
-            Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
-            Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-            Exit $($_.Exception.HResult)
         }
     }
     if($Import -and $IsMetadataSelected -and !$IsXMLConfigSelected){
-        $xmlFileLocation = (Join-Path $($TargetDirItem.FullName) $XMLConfigFileName)
-        If(!(Test-Path $xmlFileLocation)){
             $IsImportingMetadataWithoutXMLFile = $true
-        }
     }
 }
 
@@ -3103,7 +2984,7 @@ Try{
 }
 
 #If the WSUS object is not instantiated then exit.
-If ($WSUSServer -eq $null) {
+If ($null -eq $WSUSServer) {
     if($WSUSSSL){
         Add-TextToCMLog $LogFile "Failed to connect to WSUS Server $($WSUSFQDN) on port ($WSUSPort) using SSL." $component 3
     }else{
@@ -3121,25 +3002,14 @@ If(!$WSUSServerDB)
     Exit 1
 }
 
-if($ChangeIISWSUSPoolSettings){
-    Set-IISWsusPoolConfiguration -ForceWSUSPoolBestPractices:$ForceWSUSPoolBestPractices
+if($SetIISWSUSPoolSettings){
+    Set-IISWsusPoolConfiguration -WSUSPoolName $WSUSPoolName -QueueLength $QueueLength -IdleTimeout $IdleTimeout -PingEnabled $PingEnabled -PrivateMemoryLimit $PrivateMemoryLimit -RegularTimeInterval $RegularTimeInterval
 }
 
 if($Import -or $Export){
     Try{
-        ######################################EXPORT/IMPORT VARIABLES#############################################
-        #Full path to XML Configuration that will be used to export or import WSUS configuration
-        $WSUSXMLConfigFilename = Join-Path $TargetDirItem.FullName $XMLConfigFileName
-
-        #Full path to WSUS Metadata file
-        $MetadataFilename = Join-Path $TargetDirItem.FullName $MetadataFilename
-        #Full path to WSUS Metadata export log file
-        $MetadataExportLogFile = Join-Path $scriptPath "WSUSMetadataExport.log"
-        $MetadataImportLogFile = Join-Path $scriptPath "WSUSMetadataImport.log"
-
-        
         #Content directory = Folder where "WSUSContent" and "UpdateServicesPackages" reside, also known as CONTENT_DIR when using wsusutil.exe postinstall command
-        $CurrentWSUSContentDir = ((Get-Item ($WSUSServer.GetConfiguration() | Select -ExpandProperty LocalContentCachePath)).Parent).FullName
+        $CurrentWSUSContentDir = ((Get-Item ($WSUSServer.GetConfiguration() | Select-Object -ExpandProperty LocalContentCachePath)).Parent).FullName
 
         If(!$CurrentWSUSContentDir){
             Add-TextToCMLog $LogFile "Import/Export operation aborted, could not determine the WSUS Content directory. " $component 3
@@ -3147,17 +3017,25 @@ if($Import -or $Export){
             Exit 1
         }
 
-        [string[]]$FoldersToCopy = "WSUSContent","UpdateServicesPackages"
+        #[string[]]$FoldersToCopy = "WSUSContent","UpdateServicesPackages"
+        [string[]]$FoldersToCopy = "WSUSContent"
         ##########################################################################################################
-        
+
         If($Export){
+            if($IsMetadataSelected){
+                $MetadataFilename = Join-Path $DestinationDir $MetadataFilename
+                $MetadataExportLogFile = Join-Path $scriptPath "WSUSMetadataExport.log"
+            }
+            if($IsXMLConfigSelected){
+                $XMLConfigFileName = Join-Path $DestinationDir $XMLConfigFileName
+            }
             Add-TextToCMLog $LogFile "Perfoming EXPORT of WSUS Server $($WSUSFQDN)." $component 1
             if($IsXMLConfigSelected){
                 $component = "WSUS Export - Configuration"
                 Try{
-                    Add-TextToCMLog $LogFile "Exporting WSUS configuration to XML file `"$($WSUSXMLConfigFilename)`"" $component 1
+                    Add-TextToCMLog $LogFile "Exporting WSUS configuration to XML file `"$($XMLConfigFileName)`"" $component 1
                     Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 0
-                    Export-WSUSConfigurationToXML -fileName $WSUSXMLConfigFilename   
+                    Export-WSUSConfigurationToXML -fileName $XMLConfigFileName
                     Add-TextToCMLog $LogFile "WSUS Configuration exported successfully." $component 1
                 } Catch{
                     Add-TextToCMLog $LogFile "Failed to export WSUS XML configuration.." $component 3
@@ -3165,7 +3043,7 @@ if($Import -or $Export){
                     Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
                     Exit $($_.Exception.HResult)
                 }
-        
+
             }
             if($IsMetadataSelected){
                 $component = "WSUS Export - Metadata"
@@ -3188,7 +3066,7 @@ if($Import -or $Export){
                 Try{
                     foreach($folder in $FoldersToCopy){
                         $source = Join-Path $CurrentWSUSContentDir $folder
-                        $destination = Join-Path $TargetDir $folder
+                        $destination = Join-Path $DestinationDir $folder
                         $robocopyLog = Join-Path $scriptPath "RobocopyExportLog_$($folder).log"
                         Add-TextToCMLog $LogFile "Mirroring content from `"$($source)`" to `"$($destination)`"" $component 1
                         Add-TextToCMLog $LogFile "Using Robocopy to perform the operation, see export log at `"$($robocopyLog)`" for details" $component 1
@@ -3207,17 +3085,24 @@ if($Import -or $Export){
             $component = $mainComponent
             Add-TextToCMLog $LogFile "Done perfoming EXPORT of WSUS Server $($WSUSFQDN)." $component 1
         }
-        
+
 
         #IMPORT FUNCTION
         If($Import){
+            if($IsMetadataSelected){
+                $MetadataFilename = Join-Path $SourceDir $MetadataFilename
+                $MetadataImportLogFile = Join-Path $scriptPath "WSUSMetadataImport.log"
+            }
+            if($IsXMLConfigSelected){
+                $XMLConfigFileName = Join-Path $SourceDir $XMLConfigFileName
+            }
             Add-TextToCMLog $LogFile "Perfoming IMPORT of WSUS Server $($WSUSFQDN)." $component 1
             if($IsWSUSContentSelected){
                 $component = "WSUS Import - Content"
                 Try{
-                    
+
                     foreach($folder in $FoldersToCopy){
-                        $source = Join-Path $TargetDir $folder
+                        $source = Join-Path $SourceDir $folder
                         if(Test-Path $source){
                             $destination = Join-Path $CurrentWSUSContentDir $folder
                             $robocopyLog = Join-Path $scriptPath "RobocopyImportLog_$($folder).log"
@@ -3228,7 +3113,7 @@ if($Import -or $Export){
                             $robocopyResult = Invoke-Robocopy -Path $($source) -Destination $($destination) -ArgumentList "/MIR","/XA:SH","/W:10","/MT","/LOG:`"$($robocopyLog)`"" -Retry 3 -PassThru
                             Add-TextToCMLog $LogFile "Done mirroring folder `"$folder`", robocopy finished with exit code `"$($robocopyResult.ExitCode)`"." $component 1
                         }else{
-                            Add-TextToCMLog $LogFile "Folder `"$folder`" not found in `"$targetdir`", skipping copy." $component 1
+                            Add-TextToCMLog $LogFile "Folder `"$folder`" not found in `"$SourceDir`", skipping copy." $component 1
                         }
                     }
                 } Catch{
@@ -3240,7 +3125,7 @@ if($Import -or $Export){
             }
             if($IsMetadataSelected){
                 $component = "WSUS Import - Metadata"
-                
+
                 if($DropSUSDB){
                     Reset-WsusDatabase
                 }
@@ -3250,7 +3135,7 @@ if($Import -or $Export){
                     Try{
                         Add-TextToCMLog $LogFile "Updating WSUS configuration only before importing metadata." $component 1
                         Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 5
-                        Import-WSUSConfigurationFromXML -fileName $WSUSXMLConfigFilename -WSUSConfigOnly
+                        Import-WSUSConfigurationFromXML -fileName $XMLConfigFileName -WSUSConfigOnly
                         Add-TextToCMLog $LogFile "Done updating WSUS configuration." $component 1
                     } Catch{
                         Add-TextToCMLog $LogFile "Failed to update WSUS configuration." $component 3
@@ -3282,7 +3167,7 @@ if($Import -or $Export){
                         Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 5
                         #Reindexing Database after metadata import to prevent timeout issues when importing a lot of updates.
                         Invoke-WSUSDBReindex
-                        
+
                     }else{
                         Add-TextToCMLog $LogFile "WSUS Metadata import was not successful." $component 3
                         Add-TextToCMLog $LogFile "Exit code: $($result.ExitCode)" $component 3
@@ -3298,7 +3183,7 @@ if($Import -or $Export){
                 }
 
                 Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 5
-                
+
                 #Making sure the IIS Application pool is up and running, sometimes the WSUSPool is not started.
                 Try{
                     $WSUSPoolName = "WsusPool"
@@ -3324,18 +3209,13 @@ if($Import -or $Export){
                     Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
                     Exit $($_.Exception.HResult)
                 }
-
-                if($SetEulaDownloaded){
-                    Set-EulaDownloadedInSUSDB
-                    Reset-WSUSServer -MaxIterations 180 -MinsToWait 1
-                }
             }
             if($IsXMLConfigSelected){
                 $component = "WSUS Import - Configuration"
                 Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 15
                 Try{
-                    Add-TextToCMLog $LogFile "Importing WSUS configuration from XML file `"$WSUSXMLConfigFilename`"." $component 1
-                    Import-WSUSConfigurationFromXML -fileName $WSUSXMLConfigFilename
+                    Add-TextToCMLog $LogFile "Importing WSUS configuration from XML file `"$XMLConfigFileName`"." $component 1
+                    Import-WSUSConfigurationFromXML -fileName $XMLConfigFileName
                     Add-TextToCMLog $LogFile "WSUS Configuration updated successfully." $component 1
                 }Catch{
                     Add-TextToCMLog $LogFile "Failed to import configuration data from XML file." $component 3
@@ -3373,13 +3253,9 @@ if($ReindexSUSDB){
 if($Import -and ($IsMetadataSelected -or $IsXMLConfigSelected)){
     $component = "WSUS Import - Reset"
     Add-TextToCMLog $LogFile "Executing a WSUS Reset after importing metadata or WSUS XML Configuration." $component 1
-    
-    #Yes, we need to force it again to prevent issues when verifying updates...
-    if($SetEulaDownloaded){
-        Set-EulaDownloadedInSUSDB
-    }
+
     Reset-WSUSServer -MaxIterations 180 -MinsToWait 1
-    
+
     $component = $mainComponent
 }
 
