@@ -37,6 +37,10 @@ Param(
     [ValidateNotNullorEmpty()]
     [string]$Mode = "IteratePatternsBetweenExecutions",
 
+    [Parameter(ParameterSetName='cmdline')]
+    [ValidateNotNull()]
+    [switch]$DeleteSUGBeforeRunningADR,
+
     #Define a configuration file.
     [Parameter(ParameterSetName='configfile')]
     [string]$ConfigFile
@@ -118,7 +122,6 @@ Out-File -InputObject $LogLine -Append -NoClobber -Encoding Default -FilePath $L
 
 }
 ##########################################################################################################
-
 Function Invoke-CMSyncCheck {
 ##########################################################################################################
 <#
@@ -190,7 +193,6 @@ Function Invoke-CMSyncCheck {
     Add-TextToCMLog $LogFile "Software update point synchronization states confirmed." $component 1
 }
 ##########################################################################################################
-
 Function Get-SiteCode {
 ##########################################################################################################
 <#
@@ -290,7 +292,6 @@ Function Confirm-StringArray {
 }
 ##########################################################################################################
 
-
 Function Invoke-ADRWithPattern{
 <#
 .SYNOPSIS
@@ -315,14 +316,14 @@ Function Invoke-ADRWithPattern{
     )
 
     Add-TextToCMLog $LogFile "Running Automatic Deployment Rules with names like `"$($Pattern)`"." $component 1
-    $ADRs = Get-CMSoftwareUpdateAutoDeploymentRule -Fast | Where {$_.Name -like $Pattern -and $_.AutoDeploymentEnabled -eq $True}
+    $ADRs = Get-CMSoftwareUpdateAutoDeploymentRule -Fast | Where-Object {$_.Name -like $Pattern -and $_.AutoDeploymentEnabled -eq $True}
     if($ADRs){
         #If an ADR fails to run, retry for $MaxRetryCount times
         $MaxRetryCount = 10
 
         #Wait $SecondsBetweenRuns before retrying to run an ADR
         $SecondsBetweenRuns = 300
-        
+
         foreach($adr in $ADRs){
             $RunCount = 0
             $RanSuccessfully = $false
@@ -335,35 +336,39 @@ Function Invoke-ADRWithPattern{
                     #Getting LastRunTime before starting the ADR
                     Remove-Variable -Name "lastRunTime" -ErrorAction Ignore
                     $lastRunTime = (Get-CMSoftwareUpdateAutoDeploymentRule -Id ($adr.AutoDeploymentID) -Fast).LastRunTime
-                
+
                     #Handle ADRs that never ran before
-                    if($lastRunTime -eq $null){
+                    if($null -eq $lastRunTime){
                         [datetime]$lastRunTime = [datetime]"1970-01-01"
                     }else{
                         [datetime]$lastRunTime = $lastRunTime
                     }
 
+                    If($DeleteSUGBeforeRunningADR){
+                        Add-TextToCMLog $LogFile "Removing SUG `"$($adr.Name)`" before running the ADR." $component 1
+                        Get-CMSoftwareUpdateGroup -Name ($adr.Name) | Remove-CMSoftwareUpdateGroup -Force
+                    }
 
                     Invoke-CMSoftwareUpdateAutoDeploymentRule -Id ($adr.AutoDeploymentID)
-            
+
                     #Wait until the ADR run successfully.
                     Do {
                         Remove-Variable -Name "newLastRunTime" -ErrorAction Ignore
                         $newLastRunTime = (Get-CMSoftwareUpdateAutoDeploymentRule -Id $adr.AutoDeploymentID -Fast).LastRunTime
-                        
-                        if($newLastRunTime -ne $null){#Handle ADRs that never ran before
+
+                        if($null -ne $newLastRunTime){#Handle ADRs that never ran before
                             [datetime]$newLastRunTime = [datetime]$newLastRunTime
                             if($lastRunTime -ne $newLastRunTime){
                                 $Running = $false
                             }
                         }
-                    
+
                         If($Running){
                             Add-TextToCMLog $LogFile "Waiting $($WaitSeconds) seconds for ADR `"$($adr.Name)`" to stop running..." $component 1
                             Start-Sleep -Seconds $WaitSeconds
                         }
                     } Until(!$Running)
-                    
+
                     $adr = Get-CMSoftwareUpdateAutoDeploymentRule -Id $adr.AutoDeploymentID -Fast
                     If($adr.LastErrorCode -eq 0){
                         Add-TextToCMLog $LogFile "Automatic Deployment Rule `"$($adr.Name)`" ran successfully." $component 1
@@ -395,7 +400,7 @@ Function Invoke-ADRWithPattern{
 ##########################################################################################################
 #endregion Functions
 
-$scriptVersion = "0.3"
+$scriptVersion = "0.4"
 $component = 'Invoke-RunADRs'
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
 
@@ -570,10 +575,9 @@ If (!$CMSite) {
 $ADRPatterns = Confirm-StringArray $ADRPatterns
 
 Add-TextToCMLog $LogFile "Mode selected is `"$($Mode)`"." $component 1
-$ADRsToRun = [System.Collections.ArrayList]::new()
 If($Mode -eq "IteratePatternsBetweenExecutions"){
     Add-TextToCMLog $LogFile "Script will try and find the next ADR Pattern to use to run ADRs." $component 1
-    
+
     Add-TextToCMLog $LogFile "Checking if the last pattern used by script was recorded." $component 1
     $lastran_ADRPatternsPath = "filesystem::$(Join-Path $scriptPath "lastran_ADRPatterns.xml")"
     If(Test-Path -Path $lastran_ADRPatternsPath){
@@ -599,16 +603,16 @@ If($Mode -eq "IteratePatternsBetweenExecutions"){
             Add-TextToCMLog $LogFile  "Failed to compare previous list and the current list of patterns." $component 2
         }
     }
-    If(($diff -eq $null) -and ($Position -eq $null)){
+    If(($null -eq $diff) -and ($null -eq $Position)){
         Add-TextToCMLog $LogFile "Could not determine the last pattern used, will use the first pattern in the list." $component 2
         $Position = 0
     }
-    
+
     $pattern = ($ADRPatterns)[$Position]
     Add-TextToCMLog $LogFile "The pattern that will be used to run ADRs on this run will be `"$pattern`"" $component 1
 
     Invoke-ADRWithPattern -Pattern $pattern -WaitSeconds 60
-    
+
     $lastran_Patterns = New-Object -TypeName PSObject
     $lastran_Patterns | Add-Member -MemberType NoteProperty -Name Position -Value $Position
     $lastran_Patterns | Add-Member -MemberType NoteProperty -Name ADRPatterns -Value $ADRPatterns
@@ -621,13 +625,13 @@ If($Mode -eq "IteratePatternsBetweenExecutions"){
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
         Exit $($_.Exception.HResult)
     }
-    
+
 
 }ElseIf($Mode -eq "RunAllPatterns"){
     Add-TextToCMLog $LogFile "Script will run ADRs matching all patterns provided in `$ADRPatterns." $component 1
-    
+
     Foreach($pattern in $ADRPatterns){
-        Invoke-ADRWithPattern -Pattern $pattern -WaitSeconds 60       
+        Invoke-ADRWithPattern -Pattern $pattern -WaitSeconds 60
     }
     Add-TextToCMLog $LogFile "Not saving list of patterns used because we ran in `"RunAllPatterns`" mode." $component 1
 }

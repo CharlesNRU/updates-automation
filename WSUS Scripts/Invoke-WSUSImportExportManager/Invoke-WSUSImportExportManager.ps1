@@ -1603,6 +1603,92 @@ Function Remove-AutomaticApprovalRule{
 }
 ##########################################################################################################
 
+Function Invoke-EulaCheck {
+##########################################################################################################
+    <#
+    .SYNOPSIS
+        This function will periodically check the WSUS Database to see if all EULA files
+        are downloaded/verified.
+
+    .DESCRIPTION
+        The script will run a query against the tbFile table and look for EULA files.
+        In order to approve an update that has EULA(s), all EULA files must be in state=12
+        If any of the EULA files are missing, WSUS will not let you approve this update.
+    #>
+##########################################################################################################
+    Param(
+        #How many checks are done before giving up
+        [Parameter()]
+        [int]$MaxIterations = 30,
+
+        #How long is the pause between checks?
+        [Parameter()]
+        [int]$MinsToWait = 1
+    )
+
+    #Reusing logic in Connect-WSUSDB function to identify the server instance.
+    If ($WSUSServerDB.IsUsingWindowsInternalDatabase){
+        #Using the Windows Internal Database.
+        If($WSUSServerDB.ServerName -eq "MICROSOFT##WID"){
+            $ServerInstance = "\\.\pipe\MICROSOFT##WID\tsql\query"
+        }
+        Else{
+            $ServerInstance = "\\.\pipe\MSSQL`$MICROSOFT##SSEE\sql\query"
+        }
+    }
+    Else{
+        #SQL Server
+        $ServerInstance = "$($WSUSServerDB.ServerName)"
+    }
+
+
+    #Define the query
+    $tsql = "SELECT f.FileDigest,f.FileName,fos.ActualState FROM [SUSDB].[dbo].[tbFile] f INNER JOIN [SUSDB].[dbo].[tbFileOnServer] fos ON f.FileDigest = fos.FileDigest WHERE f.IsEula = 1"
+    #If Database name is different from default of SUSDB (for some unknown/unsupported reason)
+    if($($WSUSServerDB.DatabaseName) -ne "SUSDB"){
+        $tsql = $tsql -replace "SUSDB","$($WSUSServerDB.DatabaseName)"
+    }
+
+    $EULAFilesVerified = $false
+    $i = 0
+    Do{
+        Try{
+            $eulaResults = Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Query $tsql
+            $verifiedEulas = $eulaResults | Where-Object {$_.ActualState -eq 12}
+            Add-TextToCMLog $LogFile "$($verifiedEulas.count)`/$($eulaResults.count) EULA files ready." $component 1
+        }Catch{
+            Add-TextToCMLog $LogFile "Error while checking EULA files." $component 3
+            Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
+            Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
+            Exit $($_.Exception.HResult)
+        }
+        if($verifiedEulas.count -eq $eulaResults.count){
+            $EULAFilesVerified = $true
+        }else{
+            $i++
+            Start-Sleep -Seconds $MinsToWait
+        }
+    }Until($i -eq $MaxIterations -or $EULAFilesVerified)
+
+    if($EULAFilesVerified){
+        Add-TextToCMLog $LogFile "All EULA files are verified." $component 1
+    }else{
+        Add-TextToCMLog $LogFile "Max number of iterations reached and could not verify all EULA files." $component 3
+        $failedEulas = $eulaResults | Where-Object {$_.ActualState -ne 12}
+        Add-TextToCMLog $LogFile "There are $($failed.Count) EULA files that failed verification." $component 3
+        ForEach($eula in $failedEulas){
+            $StringFileDigest = [System.BitConverter]::ToString($eula.FileDigest) -replace "-",""
+            $FolderName = [System.BitConverter]::ToString(($eula.FileDigest)[($eula.FileDigest).Length-1])
+            $Extension = ".txt"
+
+            $PathOfEula = Join-Path $CurrentWSUSContentDir (Join-Path $FolderName ($StringFileDigest + $Extension))
+            Add-TextToCMLog $LogFile "EULA file at path `"$PathOfEula`" could not be verified." $component 3
+        }
+        Exit 1
+    }
+}
+##########################################################################################################
+
 Function Import-WSUSConfigurationFromXML{
 ##########################################################################################################
     <#
@@ -1808,7 +1894,6 @@ Function Import-WSUSConfigurationFromXML{
                         Add-TextToCMLog $LogFile "Getting all updates from WSUS Server $($WSUSFQDN)." $component 1
 
                         $AllUpdates = Get-WSUSUpdates -WSUSServer $WSUSServer
-                        #$AllUpdates = $WSUSServer.GetUpdates()
 
                         Add-TextToCMLog $LogFile "Declining all updates that are not in the approved updates list from the XML file." $component 1
                         Try{
@@ -1825,6 +1910,15 @@ Function Import-WSUSConfigurationFromXML{
                             Exit $($_.Exception.HResult)
                         }#end decline updates
                         Add-TextToCMLog $LogFile "Done declining updates." $component 1
+
+                        Add-TextToCMLog $LogFile "Resetting WSUS and verify EULA files." $component 1
+
+                        #Reset WSUS
+                        Reset-WSUSServer -MaxIterations 60 -MinsToWait 1
+
+                        #Check EULA files
+                        Invoke-EulaCheck -MaxIterations 60 -MinsToWait 1
+
 
                         [int]$minsToWait = 2
                         Add-TextToCMLog $LogFile "Waiting $($minsToWait) minutes for WSUS Server to process the changes." $component 1
@@ -2720,7 +2814,7 @@ Function Show-LocallyPublishedUpdates {
 ##########################################################################################################
 #endregion Functions
 
-$scriptVersion = "0.9"
+$scriptVersion = "0.9.1"
 $mainComponent = "Invoke-WSUSImportExportManager"
 $component = $mainComponent
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
