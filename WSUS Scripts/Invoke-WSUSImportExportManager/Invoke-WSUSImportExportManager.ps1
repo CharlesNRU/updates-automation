@@ -413,7 +413,7 @@ Function Get-WSUSUpdates{
             Add-TextToCMLog $LogFile "Failed to get updates from WSUS Server." $component 2
             Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 2
             Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 2
-            Add-TextToCMLog $LogFile "Waiting $($WaitSeconds) seconds before retrying..." $component 2
+            Add-TextToCMLog $LogFile "Waiting $($SecondsBetweenRetries) seconds before retrying..." $component 2
             $RetryCount++
             Start-Sleep -Seconds $SecondsBetweenRetries
         }
