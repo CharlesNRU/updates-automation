@@ -5,6 +5,7 @@ These scripts are used for standalone WSUS instances.
 
 ## Invoke-WSUSSync
 Will perform a WSUS sync. After the sync is finished, it will check if it was successful or not and exit accordingly.
+
 Exitcode 0 = WSUS sync successful
 
 ## Invoke-EulaAccepter
