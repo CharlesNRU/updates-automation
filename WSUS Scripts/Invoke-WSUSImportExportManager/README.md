@@ -79,8 +79,8 @@ The code for this was taken directly from Bryan Dam's software update maintenanc
 	<PoolSetting Name='RegularTimeInterval'>0</PoolSetting>
 </Action>
 ```
-This action allows you to configure settings for the IIS application pool for WSUS. The default parameters are not very good.
-See https://support.microsoft.com/en-ae/help/4490414/windows-server-update-services-best-practices for best practices according to Microsoft. You can adjust the settings in this action for your environment.
+This action allows you to configure settings for the IIS application pool for WSUS.
+See https://support.microsoft.com/en-ae/help/4490414/windows-server-update-services-best-practices for "best practices" according to Microsoft. You can adjust the settings in this action for your environment.
 
 ### Action - ShowLocallyPublishedUpdates
 ```xml
@@ -90,4 +90,5 @@ This action will run an update statement on the WSUS DB to make locally publishe
 
 # Thanks to:
 Bryan Dam for his software update maintenance script: https://damgoodadmin.com/2018/10/17/latest-software-maintenance-script-making-wsus-suck-slightly-less/
+
 Warren Frame for Start-ConsoleProcess and Invoke-Robocopy functions: https://github.com/RamblingCookieMonster
