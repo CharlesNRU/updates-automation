@@ -13,6 +13,9 @@
     IteratePatterns:    Will only run one pattern from the 'ADRPatterns' array per script execution. The ADRPatterns list and the position (which ADR Pattern) was used last execution is saved in a separate file.
                         If ADRPatterns is not exactly the same, the script will start at the beginning of this new list.
     RunAllPatterns:     Will run ADRs matching any of the patterns in 'ADRPatterns'.
+.PARAMETER DeleteSUGBeforeRunningADR
+    If enabled, the script will delete the SUG associated with this ADR before running it. This will reset the available and deadline date if the SUG has not changed.
+    This is useful when using ADRs for "Available" deployments where you set the deadline 12 months in the future and want to make sure they will never hit the deadline.
 #>
 [CmdletBinding(SupportsShouldProcess=$True,DefaultParameterSetName="configfile")]
 Param(
