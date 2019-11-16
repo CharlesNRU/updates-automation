@@ -3,7 +3,7 @@
 This script will attempt to check if there are new updates on the upsteam WSUS server. If there are new updates, the script will start a software update synchronization in SCCM.
 .DESCRIPTION
 Check if the specified Scheduled Task was completed successfully on the upstream WSUS Server and if it was completed more recently than the last time the script ran.
-If the scheduled task check is successful, connect to the upstream WSUS Server and query the latest ArrivalDate of updates and check if it's more recent than the last time the scritp ran.
+If the scheduled task check is successful, connect to the upstream WSUS Server and query the latest ArrivalDate of updates and check if it's more recent than the last time the script ran.
 If the ArrivalDate check is successful:
     1) Start a SCCM software update synchronization and wait for its completion.
     2) If synchronization is successful:
@@ -23,11 +23,13 @@ Param(
     #Set the log file.
     [Parameter(ParameterSetName='CheckScheduledTask')]
     [Parameter(ParameterSetName='SkipScheduledTask')]
+    [Parameter(ParameterSetName='ForceOnly')]
     [string]$LogFile,
 
     #The maximum size of the log in bytes.
     [Parameter(ParameterSetName='CheckScheduledTask')]
     [Parameter(ParameterSetName='SkipScheduledTask')]
+    [Parameter(ParameterSetName='ForceOnly')]
     [int]$MaxLogSize = 2621440,
 
     #Define the scheduled task to check on the upstream WSUS Server.
@@ -45,8 +47,9 @@ Param(
     [switch]$SkipScheduledTaskCheck,
 
     #Define if the script should not check the dates for the scheduled task completion or ArrivalDate of updates on the upstream WSUS.
-    [Parameter(ParameterSetName='CheckScheduledTask')]
-    [Parameter(ParameterSetName='SkipScheduledTask')]
+     [Parameter(ParameterSetName='CheckScheduledTask')]
+     [Parameter(ParameterSetName='SkipScheduledTask')]
+     [Parameter(ParameterSetName='ForceOnly')]
     [switch]$Force
 )
 #region Functions
@@ -127,78 +130,6 @@ Out-File -InputObject $LogLine -Append -NoClobber -Encoding Default -FilePath $L
 }
 ##########################################################################################################
 
-Function Invoke-CMSyncCheck {
-##########################################################################################################
-<#
-.SYNOPSIS
-   Invoke a synchronization check on all software update points.
-
-.DESCRIPTION
-   When ran this function will wait for the software update point synchronization process to complete
-   successfully before continuing.
-
-.EXAMPLE
-   Invoke-CMSyncCheck
-   Check the ConfigMgr sync status with the default 5 minute lead time.
-
-#>
-##########################################################################################################
-    [CmdletBinding()]
-    Param(
-        #The number of minutes to wait after the last sync to run the wizard.
-        [int]$SyncLeadTime = 5
-    )
-
-    $WaitInterval = 0 #Used to skip the initial wait cycle if it isn't necessary.
-    Do{
-
-        #Wait until the loop has iterated once.
-        If ($WaitInterval -gt 0){
-            Add-TextToCMLog $LogFile "Waiting $TimeToWait minutes for lead time to pass before executing." $component 1
-            Start-Sleep -Seconds ($WaitInterval)
-        }
-
-        #Loop through each SUP and wait until they are all done syncing.
-        Do {
-            #If synchronizing then wait.
-            If($Synchronizing){
-                Add-TextToCMLog $LogFile "Waiting for software update points to stop syncing." $component 1
-                Start-Sleep -Seconds (300)
-            }
-
-            $Synchronizing = $False
-            ForEach ($softwareUpdatePointSyncStatus in Get-CMSoftwareUpdateSyncStatus){
-                If($softwareUpdatePointSyncStatus.LastSyncState -eq 6704){$Synchronizing = $True}
-            }
-        } Until(!$Synchronizing)
-
-
-        #Loop through each SUP, calculate the last sync time, and make sure that they all synced successfully.
-        $syncTimeStamp = Get-Date "1/1/2001 12:00 AM"
-        ForEach ($softwareUpdatePointSyncStatus in Get-CMSoftwareUpdateSyncStatus){
-            If ($softwareUpdatePointSyncStatus.LastSyncErrorCode -ne 0){
-                Add-TextToCMLog $LogFile "The software update point $($softwareUpdatePointSyncStatus.WSUSServerName) failed its last synchronization with error code $($softwareUpdatePointSyncStatus.LastSyncErrorCode)." $component 3
-                Add-TextToCMLog $LogFile "Aborting..." $component 3
-                Exit 1
-            }
-
-            If ($syncTimeStamp -lt $softwareUpdatePointSyncStatus.LastSyncStateTime) {
-                $syncTimeStamp = $softwareUpdatePointSyncStatus.LastSyncStateTime
-            }
-        }
-
-
-        #Calculate the remaining time to wait for the lead time to expire.
-        $TimeToWait = ($syncTimeStamp.AddMinutes($SyncLeadTime) - (Get-Date)).Minutes
-
-        #Set the wait interval in seconds for subsequent loops.
-        $WaitInterval = 300
-    } Until ($TimeToWait -le 0)
-
-    Add-TextToCMLog $LogFile "Software update point synchronization states confirmed." $component 1
-}
-##########################################################################################################
-
 #Taken from https://stackoverflow.com/questions/5648931/test-if-registry-value-exists
 Function Test-RegistryValue {
 ##########################################################################################################
@@ -271,36 +202,9 @@ Function Get-SiteCode {
 }
 ##########################################################################################################
 
-Function Confirm-StringArray {
-##########################################################################################################
-<#
-.SYNOPSIS
-   Confirm that the string is not actually an array.
-
-.DESCRIPTION
-   If a string array is passed with a single element containing commas then split the string into an array.
-
-#>
-##########################################################################################################
-    Param(
-        [string[]] $StringArray
-    )
-
-    If ($StringArray){
-        If ($StringArray.Count -eq 1){
-            If ($StringArray[0] -ilike '*,*'){
-                $StringArray = $StringArray[0].Split(",")
-                Add-TextToCMLog $LogFile "The string array only had one element that contained commas.  It has been split into $($StringArray.Count) separate elements." $component 2
-            }
-        }
-    }
-    Return $StringArray
-}
-##########################################################################################################
-
 #endregion Functions
 
-$scriptVersion = "0.2"
+$scriptVersion = "0.3"
 $component = 'Invoke-OfflineSUPSync'
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
 
@@ -322,9 +226,14 @@ If (Test-path  $LogFile -PathType Leaf) {
 Add-TextToCMLog $LogFile "#############################################################################################" $component 1
 Add-TextToCMLog $LogFile "$component started (Version $($scriptVersion))." $component 1
 
-If(!$SkipScheduledTaskCheck -and !$ScheduledTaskName){
+If(!$SkipScheduledTaskCheck -and !$ScheduledTaskName -and !$Force){
     Add-TextToCMLog $LogFile "Please specify the name of a scheduled task to check on the upstream WSUS Server or use the -SkipScheduledTaskCheck parameter to skip this requirement." $component 3
     Exit 1
+}
+
+#If -Force is used and no scheduled task is specified, skip the scheduled task check
+If(!$SkipScheduledTaskCheck -and !$ScheduledTaskName){
+    $SkipScheduledTaskCheck = $true
 }
 
 #endregion Parameter validation
@@ -333,7 +242,7 @@ $ErrorActionPreference = "Stop"
 
 #Check to make sure we're running this on a primary site server that has the SMS namespace.
 If (!(Get-Wmiobject -namespace "Root" -class "__Namespace" -Filter "Name = 'SMS'")){
-    Add-TextToCMLog $LogFile "Currently, this script must be ran on a primary site server." $component 3
+    Add-TextToCMLog $LogFile "Currently, this script must run on a primary site server." $component 3
     Exit 1
 }
 
@@ -437,6 +346,7 @@ If(!$SkipScheduledTaskCheck){
 
     }Catch{
         Add-TextToCMLog $LogFile "Could not verify status of the scheduled task `"$ScheduledTaskName`" on `"$UpstreamWSUS`"." $component 3
+        Add-TextToCMLog $LogFile "Tip: Make sure the account running this script has access to the Upstream WSUS to get the scheduled task information." $component 3
         Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
         Exit $($_.Exception.HResult)
@@ -489,7 +399,7 @@ If(!$SkipScheduledTaskCheck){
     Add-TextToCMLog $LogFile "Skipping scheduled task check." $component 1
 }
 
-If($STCheckPassed -or $SkipScheduledTaskCheck){
+If($STCheckPassed -or $SkipScheduledTaskCheck -or $Force){
      Add-TextToCMLog $LogFile "ArrivalDate check: Checking the latest ArrivalDate for updates on the upstream WSUS Server against the recorded ArrivalDate." $component 1
     $recordedArrivalDateSuccessPath = "filesystem::$(Join-Path $scriptPath "lastsuccess_WSUS_ArrivalDate.xml")"
     If(Test-Path -Path $recordedArrivalDateSuccessPath){
@@ -533,23 +443,10 @@ If($STCheckPassed -or $SkipScheduledTaskCheck){
     If(($lastArrivalDate -gt $recordedArrivalDate -or !($recordedArrivalDate)) -or $Force){
         If($Force){
         Add-TextToCMLog $LogFile "Force parameter enabled, bypassing check..." $component 2
+        }else{
+            Add-TextToCMLog $LogFile "ArrivalDate check passed." $component 1
         }
-        Add-TextToCMLog $LogFile "ArrivalDate check passed." $component 1
         [bool]$ADCheckPassed = $true
-
-        Try{
-            If(!$SkipScheduledTaskCheck){
-                Add-TextToCMLog $LogFile "Recording date of last successful scheduled task `"$($ScheduledTaskName)`"." $component 1
-                If(!$WhatIfPreference){$lastScheduledTaskDate | Export-Clixml -Path $recordedScheduledTaskSuccessPath}
-            }
-            Add-TextToCMLog $LogFile "Recording date of newest ArrivalTime on upstream WSUS server `"$($UpstreamWSUS)`"." $component 1
-            If(!$WhatIfPreference){$lastArrivalDate | Export-Clixml -Path $recordedArrivalDateSuccessPath}
-        }Catch{
-            Add-TextToCMLog $LogFile "Failed to save the recorded dates." $component 3
-            Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
-            Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-            Exit $($_.Exception.HResult)
-        }
     }else{
         Add-TextToCMLog $LogFile "The newest ArrivalDate on the upstream WSUS is not newer than the last recorded ArrivalDate." $component 2
         Add-TextToCMLog $LogFile "Recorded ArrivalDate: $($recordedArrivalDate), Upstream WSUS latest ArrivalDate: $($lastArrivalDate)" $component 2
@@ -559,19 +456,35 @@ If($STCheckPassed -or $SkipScheduledTaskCheck){
 }
 If((($STCheckPassed -or $SkipScheduledTaskCheck) -and $ADCheckPassed) -or $Force){
     Try{
-        If(!$WhatIfPreference){Sync-CMSoftwareUpdate -FullSync $True}
-        Add-TextToCMLog $LogFile "Initiated a full software update sync and waiting one minute for it to start." $component 1
-        If (!$WhatIfPreference) {Start-Sleep -Seconds 60}
-        Invoke-CMSyncCheck
+        
+        #Storing $OriginalLocation before running the sync script
+        $location = $OriginalLocation
+
+        . $scriptPath\Invoke-DGASoftwareUpdatePointSync.ps1 -LogFile $($logfile -replace "filesystem::","") -MaxLogSize $MaxLogSize -SiteCode $SiteCode -WhatIf:$WhatIfPreference -Wait -Force
+        $component = "Invoke-OfflineSUPSync"
+        $OriginalLocation = $location
+
+        #Check if the sync was successful
+        $SyncStatus = Get-CMSoftwareUpdateSyncStatus
+        
+        Set-Location $OriginalLocation
+        If($SyncStatus.LastSyncErrorCode -eq 0){
+            Add-TextToCMLog $LogFile "Software Update synchronization was successful." $component 1
+        }else{
+            Add-TextToCMLog $LogFile "Software Update synchronization failed." $component 3
+            Add-TextToCMLog $LogFile "LastSyncErrorCode = $($SyncStatus.LastSyncErrorCode)" $component 3
+            Add-TextToCMLog $LogFile "LastSyncState = $($SyncStatus.LastSyncState)" $component 3
+            Exit 1
+        }
     }
     Catch [System.Exception]{
-        Add-TextToCMLog $LogFile "Failed to initiate a full update sync.)" $component 3
-        Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
+        Add-TextToCMLog $LogFile "Failed to perform software update synchronization." $component 3
+        Add-TextToCMLog $LogFile "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
         Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
         Exit $($_.Exception.HResult)
     }
 
-    If(!$SkipScheduledTaskCheck){
+    If(!$SkipScheduledTaskCheck -and ($null -ne $ScheduledTaskName)){
         Try{
             Add-TextToCMLog $LogFile "Recording date of last successful scheduled task `"$($ScheduledTaskName)`"." $component 1
             $lastScheduledTaskDate | Export-Clixml -Path $recordedScheduledTaskSuccessPath -WhatIf:$WhatIfPreference -ErrorAction Stop
