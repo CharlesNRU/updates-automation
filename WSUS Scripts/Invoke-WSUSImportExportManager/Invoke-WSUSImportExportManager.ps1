@@ -413,7 +413,7 @@ Function Get-WSUSUpdates{
             Add-TextToCMLog $LogFile "Failed to get updates from WSUS Server." $component 2
             Add-TextToCMLog $LogFile  "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 2
             Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 2
-            Add-TextToCMLog $LogFile "Waiting $($SecondsBetweenRetries) seconds before retrying..." $component 2
+			Add-TextToCMLog $LogFile "Waiting $($SecondsBetweenRetries) seconds before retrying..." $component 2
             $RetryCount++
             Start-Sleep -Seconds $SecondsBetweenRetries
         }
@@ -1619,11 +1619,11 @@ Function Invoke-EulaCheck {
     Param(
         #How many checks are done before giving up
         [Parameter()]
-        [int]$MaxIterations = 30,
+        [int]$MaxIterations = 60,
 
         #How long is the pause between checks?
         [Parameter()]
-        [int]$MinsToWait = 1
+        [int]$SecondsToWait = 1
     )
 
     #Reusing logic in Connect-WSUSDB function to identify the server instance.
@@ -1666,7 +1666,7 @@ Function Invoke-EulaCheck {
             $EULAFilesVerified = $true
         }else{
             $i++
-            Start-Sleep -Seconds $MinsToWait
+            Start-Sleep -Seconds $SecondsToWait
         }
     }Until($i -eq $MaxIterations -or $EULAFilesVerified)
 
@@ -1675,13 +1675,13 @@ Function Invoke-EulaCheck {
     }else{
         Add-TextToCMLog $LogFile "Max number of iterations reached and could not verify all EULA files." $component 3
         $failedEulas = $eulaResults | Where-Object {$_.ActualState -ne 12}
-        Add-TextToCMLog $LogFile "There are $($failed.Count) EULA files that failed verification." $component 3
+        Add-TextToCMLog $LogFile "There are $($failedEulas.Count) EULA files that failed verification." $component 3
         ForEach($eula in $failedEulas){
             $StringFileDigest = [System.BitConverter]::ToString($eula.FileDigest) -replace "-",""
             $FolderName = [System.BitConverter]::ToString(($eula.FileDigest)[($eula.FileDigest).Length-1])
             $Extension = ".txt"
 
-            $PathOfEula = Join-Path $CurrentWSUSContentDir (Join-Path $FolderName ($StringFileDigest + $Extension))
+            $PathOfEula = Join-Path (Join-Path $CurrentWSUSContentDir "WsusContent") (Join-Path $FolderName ($StringFileDigest + $Extension))
             Add-TextToCMLog $LogFile "EULA file at path `"$PathOfEula`" could not be verified." $component 3
         }
         Exit 1
@@ -1911,13 +1911,13 @@ Function Import-WSUSConfigurationFromXML{
                         }#end decline updates
                         Add-TextToCMLog $LogFile "Done declining updates." $component 1
 
-                        Add-TextToCMLog $LogFile "Resetting WSUS and verify EULA files." $component 1
+                        Add-TextToCMLog $LogFile "Resetting WSUS and verifying EULA files." $component 1
 
                         #Reset WSUS
                         Reset-WSUSServer -MaxIterations 60 -MinsToWait 1
 
-                        #Check EULA files
-                        Invoke-EulaCheck -MaxIterations 60 -MinsToWait 1
+                        #Check EULA files, 5 minutes should be more than enough to verify a couple of text files.
+                        Invoke-EulaCheck -MaxIterations 60 -SecondsToWait 5
 
 
                         [int]$minsToWait = 2
@@ -2814,7 +2814,7 @@ Function Show-LocallyPublishedUpdates {
 ##########################################################################################################
 #endregion Functions
 
-$scriptVersion = "0.9.1"
+$scriptVersion = "0.9.2"
 $mainComponent = "Invoke-WSUSImportExportManager"
 $component = $mainComponent
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
@@ -3191,32 +3191,6 @@ if($Import -or $Export){
                 $XMLConfigFileName = Join-Path $SourceDir $XMLConfigFileName
             }
             Add-TextToCMLog $LogFile "Perfoming IMPORT of WSUS Server $($WSUSFQDN)." $component 1
-            if($IsWSUSContentSelected){
-                $component = "WSUS Import - Content"
-                Try{
-
-                    foreach($folder in $FoldersToCopy){
-                        $source = Join-Path $SourceDir $folder
-                        if(Test-Path $source){
-                            $destination = Join-Path $CurrentWSUSContentDir $folder
-                            $robocopyLog = Join-Path $scriptPath "RobocopyImportLog_$($folder).log"
-                            Add-TextToCMLog $LogFile "Mirroring content from `"$($source)`" to `"$($destination)`"" $component 1
-                            Add-TextToCMLog $LogFile "Using Robocopy to perform the operation, see import log at `"$($robocopyLog)`" for details" $component 1
-
-                            #ROBOCOPY OPTIONS USED: /MIR=Mirror source and destination, /XA:SH=Ignore System and Hidden files, /W:10=Wait 10 seconds to retry, -Retry 3=Retry 3 times,/MT=multi thread
-                            $robocopyResult = Invoke-Robocopy -Path $($source) -Destination $($destination) -ArgumentList "/MIR","/XA:SH","/W:10","/MT","/LOG:`"$($robocopyLog)`"" -Retry 3 -PassThru
-                            Add-TextToCMLog $LogFile "Done mirroring folder `"$folder`", robocopy finished with exit code `"$($robocopyResult.ExitCode)`"." $component 1
-                        }else{
-                            Add-TextToCMLog $LogFile "Folder `"$folder`" not found in `"$SourceDir`", skipping copy." $component 1
-                        }
-                    }
-                } Catch{
-                    Add-TextToCMLog $LogFile "WSUS Content copy failed." $component 3
-                    Add-TextToCMLog $LogFile "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
-                    Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
-                    Exit $($_.Exception.HResult)
-                }
-            }
             if($IsMetadataSelected){
                 $component = "WSUS Import - Metadata"
 
@@ -3276,8 +3250,6 @@ if($Import -or $Export){
                     Exit $($_.Exception.HResult)
                 }
 
-                Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 5
-
                 #Making sure the IIS Application pool is up and running, sometimes the WSUSPool is not started.
                 Try{
                     $WSUSPoolName = "WsusPool"
@@ -3304,6 +3276,47 @@ if($Import -or $Export){
                     Exit $($_.Exception.HResult)
                 }
             }
+
+            if($IsWSUSContentSelected){
+                $component = "WSUS Import - Content"
+                Try{
+                    Add-TextToCMLog $LogFile "Stopping WSUS Service." $component 1
+                    Stop-Service -Name WsusService -Force
+                    Set-Service -Name WsusService -StartupType Manual
+                    Add-TextToCMLog $LogFile "WSUS Service stopped." $component 1
+
+                    Add-TextToCMLog $LogFile "Removing all current BITS transfer to avoid issues with the content copy." $component 1
+                    Get-BitsTransfer -AllUsers | Remove-BitsTransfer
+                    Add-TextToCMLog $LogFile "Removed BITS transfers." $component 1
+
+                    foreach($folder in $FoldersToCopy){
+                        $source = Join-Path $SourceDir $folder
+                        if(Test-Path $source){
+                            $destination = Join-Path $CurrentWSUSContentDir $folder
+                            $robocopyLog = Join-Path $scriptPath "RobocopyImportLog_$($folder).log"
+                            Add-TextToCMLog $LogFile "Mirroring content from `"$($source)`" to `"$($destination)`"" $component 1
+                            Add-TextToCMLog $LogFile "Using Robocopy to perform the operation, see import log at `"$($robocopyLog)`" for details" $component 1
+
+                            #ROBOCOPY OPTIONS USED: /MIR=Mirror source and destination, /XA:SH=Ignore System and Hidden files, /W:10=Wait 10 seconds to retry, -Retry 3=Retry 3 times,/MT=multi thread
+                            $robocopyResult = Invoke-Robocopy -Path $($source) -Destination $($destination) -ArgumentList "/MIR","/XA:SH","/W:10","/MT","/LOG:`"$($robocopyLog)`"" -Retry 3 -PassThru
+                            Add-TextToCMLog $LogFile "Done mirroring folder `"$folder`", robocopy finished with exit code `"$($robocopyResult.ExitCode)`"." $component 1
+                        }else{
+                            Add-TextToCMLog $LogFile "Folder `"$folder`" not found in `"$SourceDir`", skipping copy." $component 1
+                        }
+                    }
+
+                    Add-TextToCMLog $LogFile "Starting the WSUS Service." $component 1
+                    Start-Service -Name WsusService
+                    Set-Service -Name WsusService -StartupType Automatic
+                    Add-TextToCMLog $LogFile "WSUS Service started." $component 1
+                } Catch{
+                    Add-TextToCMLog $LogFile "WSUS Content copy failed." $component 3
+                    Add-TextToCMLog $LogFile "Error: $($_.Exception.HResult)): $($_.Exception.Message)" $component 3
+                    Add-TextToCMLog $LogFile "$($_.InvocationInfo.PositionMessage)" $component 3
+                    Exit $($_.Exception.HResult)
+                }
+            }
+
             if($IsXMLConfigSelected){
                 $component = "WSUS Import - Configuration"
                 Invoke-WSUSSyncCheck -WSUSServer $WSUSServer -SyncLeadTime 15
