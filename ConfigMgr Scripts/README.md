@@ -1,5 +1,5 @@
-# SCCM Scripts
-These are used for SCCM servers syncing to an upstream WSUS and not directly to Microsoft.
+# ConfigMgr Scripts
+These are used for ConfigMgr sites syncing to an upstream WSUS and not directly to Microsoft.
 
 ## Invoke-AfterPatchTuesdayCheck
 When ran, it will check if the current date is within 7 days after patch tuesday.
@@ -45,3 +45,19 @@ If you rerun the script a second time, it will now run all ADRs with "- Deployme
 It will alternate which ADRs are run every time you run the script.
 
 Note: The "DeleteSUGBeforeRunningADR" switch assumes that you are reusing SUGS and not creating a new one SUG every run.
+
+# My setup
+I setup the scripts to run from the site server from the task scheduler (poor man's automation...)
+## ConfigMgr site syncing to a WSUS connected to internet
+When the upstream WSUS instance is connected to internet, you do not have to rely on a separate process to get updates imported to WSUS. You *know* that the WSUS instance should have new updates after patch tuesday.
+1) Invoke-AfterPatchTuesdayCheck: Is it within 1 week of patch tuesday?
+2) If within 1 week of patch tuesday, run Invoke-OfflineSUPSync to sync the SUP (skip the scheduled task check)
+3) Run cleanup script that declines any updates on the SUP that is not approved on the upstream WSUS server.
+I use Bryan Dam's script with the Decline-NotApprovedUpdatesOnUpstreamWSUS.ps1 plugin **only**, no other criteria is used to decline updates. This ensures that the same updates on the WSUS instances are available to the ConfigMgr site.
+Direct link to the plugin for more information: https://github.com/bryandam/SoftwareUpdateScripts/blob/master/Invoke-DGASoftwareUpdateMaintenance/Plugins/Disabled/Decline-NotApprovedUpdatesOnUpstreamWSUS.ps1
+4) Invoke-RunADRs
+## ConfigMgr site syncing to a WSUS disconnected from internet
+When the upstream WSUS is disconnected, we do not know when new updates will be available on the upstream WSUS. In this case, I have created a separate script that handles the import and export of WSUS for disconnected environments. I set up a scheduled task on the WSUS server called "WSUS Import" that is run when importing new updates to the WSUS instance. Invoke-OfflineSUPsync will check if the task was successful before checking the arrivaldate on the WSUS Server.
+1) Invoke-OfflineSUPSync
+2) Run cleanup script, see section above for declining updates not approved on the upstream WSUS server.
+3) Invoke-RunADRs
