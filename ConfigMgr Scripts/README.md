@@ -18,6 +18,8 @@ Note: You may use the -SkipScheduledTask parameter to skip the scheduled task ch
 
 After the 2 checks are successful, the script will initiate a software update synchronization and check if it's successful or not and exit accordingly.
 
+Important: The **needs** Bryan Dam's script "Invoke-DGASoftwareUpdatePointSync.ps1" to initiate the synchronization. It should be placed in the same folder as this script.
+
 ## Invoke-RunADRs
 The script will run a set of ADRs with a pattern given.
 It will also retry if an ADR fails to run for some reason. Deadlocks are not uncommon when running multiple ADRs in quick succession.
