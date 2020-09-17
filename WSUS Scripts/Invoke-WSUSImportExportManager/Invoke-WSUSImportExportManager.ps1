@@ -1257,7 +1257,12 @@ Function Add-ChildComputerGroupToParentXML{
     )
 
     #Create current group element
-    $currentGroupName = $ComputerTargetGroup.Name
+    If($ComputerTargetGroup.Id -eq 'b73ca6ed-5727-47f3-84de-015e03f6a88a'){#Handle Unassigned Computers group for different languages
+        $currentGroupName = "Unassigned Computers"
+    }Else{
+        $currentGroupName = $ComputerTargetGroup.Name
+    }
+
     $currentGroupElement = $MainXMLDocument.CreateElement("ComputerGroup")
     $currentGroupElement.InnerText = $($currentGroupName)
 
@@ -1343,12 +1348,16 @@ Function Export-WSUSConfigurationToXML{
         $WSUSXMLComputerGroups = $WSUSXMLConfig.CreateElement("ComputerGroups")
         [void]$WSUSXMLConfigRoot.AppendChild($WSUSXMLComputerGroups)
 
-
-        $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.name -eq "All Computers"}
         $allComputersGroupElement = $WSUSXMLConfig.CreateElement("ComputerGroup")
-        $allComputersGroupElement.InnerText = $($allComputersGroup.Name)
+        $allComputersGroupElement.InnerText = "All Computers" #Hardcoding the name of the group in english for the XML file
 
+        $allGroups = $WSUSServer.GetComputerTargetGroups()
+        
+        #The 'All Computers' & 'Unassigned Computers' group Id are static as far as I know...
+        $AllComputersGroupId = 'a0a08746-4dbe-4a37-9adf-9e7652c0b421'
+        $UnassignedComputersGroupId = 'b73ca6ed-5727-47f3-84de-015e03f6a88a'
 
+        $allComputersGroup = $allGroups | Where-Object{$_.Id -eq $allComputersGroupId}
         $childGroups = $allComputersGroup.GetChildTargetGroups()
         foreach($childgroup in $childGroups){
             Add-ChildComputerGroupToParentXML -MainXMLDocument $WSUSXMLConfig -ParentXMLElement $allComputersGroupElement -ComputerTargetGroup $childgroup
@@ -1372,7 +1381,32 @@ Function Export-WSUSConfigurationToXML{
                 $approvals = $_.GetUpdateApprovals()
                 foreach($approval in $approvals){
                     $computerGroupElement = $WSUSXMLConfig.CreateElement("ComputerGroup")
-                    $computerGroupElement.InnerText = $($approval.GetComputerTargetGroup() | Select-Object -ExpandProperty Name)
+                    #Computer Group name
+                    switch($approval.ComputerTargetGroupId){
+                        $AllComputersGroupId{
+                            $ComputerGroupName = "All Computers"
+                        }
+                        $UnassignedComputersGroupId{
+                            $ComputerGroupName = "Unassigned Computers"
+                        }
+                        default{
+                            $ComputerGroupName = $approval.getcomputertargetgroup() | Select-Object -ExpandProperty Name
+                        }
+                    }
+                    $computerGroupElement.InnerText = $ComputerGroupName
+
+                    $Action = $approval.Action
+                    $computerGroupElement.SetAttribute("Action",$Action)
+
+                    $IsOptional = $approval.IsOptional
+                    $computerGroupElement.SetAttribute("IsOptional",$IsOptional)
+
+                    
+                    If($($approval.Deadline).Year -ne '9999'){#Assuming no deadline if year is 9999
+                        #Saving date in epoch time to avoid timezone/culture issues
+                        $Deadline = [int64](Get-Date($approval.Deadline) -UFormat %s -Millisecond 0)
+                        $computerGroupElement.SetAttribute("Deadline",$Deadline)
+                    }
                     [void]$computerGroups.AppendChild($computerGroupElement)
                 }
                 [void]$updateElement.AppendChild($computerGroups)
@@ -1853,19 +1887,21 @@ Function Import-WSUSConfigurationFromXML{
 
                 [System.Xml.XmlElement]$allComputersGroupElement = $computerGroups.ComputerGroup
                 $allComputersGroupName = "All Computers"
+                $unassignedComputersGroupName = "Unassigned Computers"
 
                 #Verify that the first computer group is "All Computers"
                 if($($allComputersGroupElement.'#text') -eq $allComputersGroupName){
                     $subGroups = $allComputersGroupElement.ComputerGroup
 
-                    $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq "All Computers"}
+                    $allComputersGroup = $WSUSServer.GetComputerTargetGroups() | Where-Object{$_.Id -eq 'a0a08746-4dbe-4a37-9adf-9e7652c0b421'}
 
-                    #$currentAllComputersSubGroups = $WSUSServer.GetComputerTargetGroups() | Where-Object {($_.Name -ne "All Computers") -and ($_.GetParentTargetGroup() -eq $allComputersGroup)} | Select-Object -ExpandProperty Name
                     foreach($subGroup in $subGroups){
                         if($subGroup -is [System.Xml.XmlElement]){#Computer group has sub groups
                             New-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupElement $subGroup
                         }elseif($subGroup -is [String]){#Computer Group does not have any child groups
-                            New-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupName $subGroup
+                            If($subGroup -ne $unassignedComputersGroupName){#Ignore 'Unassigned Computers' since it's built-in
+                                New-ComputerGroupFromXML -ParentComputerGroup $allComputersGroup -NewComputerGroupName $subGroup
+                            }
                         }
                         else{
                             Add-TextToCMLog $LogFile "Information on child group `"$($subGroup)`" under All Computers XML element is neither an XMLElement or a String, please verify XML file." $component 2
@@ -1885,10 +1921,10 @@ Function Import-WSUSConfigurationFromXML{
             if($IncludeApprovals){
                 Add-TextToCMLog $LogFile "Importing updates approvals." $component 1
 
-                [System.Xml.XmlElement]$approvals = $WSUSXMLConfig.WSUSConfiguration.ApprovedUpdates
-                if($approvals){
+                [System.Xml.XmlElement]$approvedUpdates = $WSUSXMLConfig.WSUSConfiguration.ApprovedUpdates
+                if($approvedUpdates){
 
-                    $approvedUpdatesID = ($approvals.ChildNodes).ID
+                    $approvedUpdatesID = ($approvedUpdates.ChildNodes).ID
 
                     if($approvedUpdatesID){
                         Add-TextToCMLog $LogFile "Getting all updates from WSUS Server $($WSUSFQDN)." $component 1
@@ -1926,20 +1962,51 @@ Function Import-WSUSConfigurationFromXML{
 
 
                         Add-TextToCMLog $LogFile "Approving updates for each applicable computer group." $component 1
+                        $WSUSComputerGroups = $WSUSServer.GetComputerTargetGroups()
                         Try{
-                            foreach($update in ($approvals.ChildNodes)){
+                            foreach($update in ($approvedUpdates.ChildNodes)){
                                 $wsusUpdate = $AllUpdates | Where-Object {$_.id.UpdateID.Guid -eq $update.ID}
                                 $updateTitle = $wsusUpdate | Select-Object -ExpandProperty Title
 
                                 $update.ComputerGroups.ComputerGroup | ForEach-Object{
-                                    Add-TextToCMLog $LogFile "Approving update $($updateTitle) for computer group `"$($_)`"." $component 1
-                                    $groupName = $_
-                                    $group = $WSUSServer.GetComputerTargetGroups() | Where-Object {$_.Name -eq $groupname}
+                                    switch($($_.'#text')){
+                                        "All Computers"{
+                                            $groupName = $WSUSComputerGroups | Where-Object{$_.Id -eq 'a0a08746-4dbe-4a37-9adf-9e7652c0b421'} | Select-Object -ExpandProperty Name
+                                        }
+                                        "Unassigned Computers"{
+                                            $groupName = $WSUSComputerGroups | Where-Object{$_.Id -eq 'b73ca6ed-5727-47f3-84de-015e03f6a88a'} | Select-Object -ExpandProperty Name
+                                        }
+                                        default{
+                                            $groupName = $_
+                                        }
+                                    }
+
+                                    $group = $WSUSComputerGroups | Where-Object {$_.Name -eq $groupName}
 
                                     if($wsusUpdate.RequiresLicenseAgreementAcceptance){
                                         $wsusUpdate.AcceptLicenseAgreement()
                                     }
-                                    $wsusUpdate.Approve('Install',$group) | Out-Null
+
+                                    $Action = $_.Action
+                                    [bool]$IsOptional = [System.Boolean]::Parse($_.IsOptional)
+
+                                    If($_.Deadline){
+                                        [datetime]$epoch = '1970-01-01 00:00:00'
+                                        $Deadline = $epoch.AddSeconds($_.Deadline)
+                                    }
+
+                                    If(!$IsOptional){
+                                        If(-not ($_.Deadline)){
+                                            Add-TextToCMLog $LogFile "Approving update `"$($updateTitle)`" with action `"$Action`" for computer group `"$($group.Name)`"." $component 1
+                                            [void]$wsusUpdate.Approve($Action, $group)
+                                        }Else{
+                                            Add-TextToCMLog $LogFile "Approving update `"$($updateTitle)`" with action `"$Action`" for computer group `"$($group.Name)`" with a deadline date of `"$($Deadline)`"." $component 1
+                                            [void]$wsusUpdate.Approve($Action, $group, $Deadline)
+                                        }
+                                    }Else{
+                                        Add-TextToCMLog $LogFile "Approving update `"$($updateTitle)`" for computer group `"$($group.Name)`" for optional install." $component 1
+                                        [void]$wsusUpdate.ApproveForOptionalInstall($group)
+                                    }
                                 }
                             }
                         } Catch{
@@ -2814,7 +2881,7 @@ Function Show-LocallyPublishedUpdates {
 ##########################################################################################################
 #endregion Functions
 
-$scriptVersion = "0.9.2"
+$scriptVersion = "0.9.3"
 $mainComponent = "Invoke-WSUSImportExportManager"
 $component = $mainComponent
 $scriptPath = split-path -parent $MyInvocation.MyCommand.Definition
